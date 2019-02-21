@@ -1,5 +1,14 @@
 FabSim
-======
+===
+[![Build Status](https://travis-ci.com/djgroen/FabSim3.svg?branch=fabsim_qcg_dev)](https://travis-ci.com/djgroen/FabSim3)
+[![Docker Pulls](https://img.shields.io/docker/pulls/vecmafabsim3/fabsimdocker.svg)](https://hub.docker.com/r/vecmafabsim3/fabsimdocker/)
+[![Docker Pulls](https://img.shields.io/docker/automated/vecmafabsim3/fabsimdocker.svg)](https://hub.docker.com/r/vecmafabsim3/fabsimdocker/)
+
+
+<!---
+for master branch use : 
+[![Build Status](https://travis-ci.com/djgroen/FabSim3.svg?branch=master)](https://travis-ci.com/djgroen/FabSim3))
+-->
 
 FabSim is a Python-based automation toolkit for scientific simulation and data processing workflows, licensed under the BSD 3-clause license. It aims to enable users to perform remote tasks from a local command-line, and to run applications while curating the environment variables and the input and output data in a systematic manner. To provide that curation, FabSim uses a basic data transfer functionalities such as rsync and ssh. 
 
