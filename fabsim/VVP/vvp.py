@@ -3,6 +3,7 @@
 # These patterns should be purposed for specific settings.
 # As such, they do not contain a @task descriptor.
 import os
+from fabsim.base.error_handler import FabSimError
 from collections import OrderedDict
 from pprint import pprint
 
@@ -71,7 +72,7 @@ def ensemble_vvp_QoI(simulation_result_QoI, uncertainty_result_QoI, QoI_name):
     uncertainty_result_QoI = np.array(uncertainty_result_QoI)
 
     if simulation_result_QoI.shape != uncertainty_result_QoI.shape:
-        raise RuntimeError("The dimension of two input array are not equal !")
+        raise FabSimError.RuntimeError("The dimension of two input array are not equal !")
 
     if simulation_result_QoI.ndim == 1:
         simulation_result_QoI = np.array([simulation_result_QoI])
@@ -183,10 +184,10 @@ def ensemble_vvp_LoR(
         if os.path.isdir(os.path.join(results_dirs_PATH, dirname))
     ]
     if len(results_dirs) == 0:
-        raise ValueError(
-            "\nThere is not subdirectories in the passed "
-            "results_dirs_PATH arguments."
-            "\nresults_dirs_PATH = %s" % (results_dirs_PATH)
+        raise FabSimError.ValueError(
+            "There is not subdirectories in the passed "
+            "results_dirs_PATH arguments.",
+            details=f"results_dirs_PATH = {results_dirs_PATH}"
         )
 
     #########################################################

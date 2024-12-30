@@ -7,15 +7,15 @@ default:
   module_load_at_connect: true
   cores: 4
   run_prefix_commands: []
-  home_path_template: /home/$username
+  home_path_template: $plugin_dir
   fabric_dir: FabSim
-  runtime_path_template: $home_path
+  runtime_path_template: $home_path/localhost_exe
   corespernode: 1
   cpuspertask: 1
   nodes: 1
   cores_per_replica: '${cores}'
   job_dispatch: ''
-  remote_path_template: $home_path/$fabric_dir
+  remote_path_template: $home_path/localhost_exe/$fabric_dir
   work_path_template: $runtime_path/$fabric_dir
   batch_header: no_batch
   run_command: mpirun -np $cores
@@ -27,11 +27,10 @@ default:
   manual_sshpass: false
   ssh_monsoon_mode: false
   local_templates_path:
-    - $fabsim_root/deploy/templates
+    - $fabsim_config_dir/templates
   stat: squeue -u $username
-  cancel_job_command: qdel
   local_config_file_path:
-    - $fabsim_root/config_files
+    - $plugin_dir/config_files
   python3_command: python3
   prevent_results_overwrite: ignore
   rich_console: true
@@ -39,7 +38,7 @@ default:
 localhost:
   remote: localhost
   python_build: lib/python2.7
-  home_path_template: /home/$username
+  home_path_template: $plugin_dir
   manual_ssh: true
   batch_header: bash_header
 cartesius:

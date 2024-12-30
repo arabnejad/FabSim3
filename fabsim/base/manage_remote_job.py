@@ -5,8 +5,8 @@ from beartype import beartype
 from beartype.typing import Optional
 
 from fabsim.base.decorators import task
-from fabsim.base.env import env
-from fabsim.base.networks import local, run
+from fabsim.base.environment_manager import env
+from fabsim.base.command_runner import cmd_runner
 from fabsim.deploy.templates import template
 
 
@@ -25,11 +25,13 @@ def stat() -> None:
 
 
 @beartype
-def jobs_list(quiet: Optional[bool] = False) -> str:
+def jobs_list() -> str:
     """
     options:
             quiet = True : hide the command output
     """
+    print(f"\n\n\n\ $stat = {template('$stat')}\n\n\n")
+
     CRED = "\33[31m"
     CEND = "\33[0m"
     if (
@@ -37,8 +39,8 @@ def jobs_list(quiet: Optional[bool] = False) -> str:
         and isinstance(env.dispatch_jobs_on_localhost, bool)
         and env.dispatch_jobs_on_localhost
     ):
-        # output = local(template("$stat "), capture=quiet).splitlines()
-        output = run(template("$stat "), capture=quiet)
+        # output = local(template("$stat ")).splitlines()
+        output = cmd_runner.run(template("$stat "))
         return output
 
     elif env.manual_sshpass:
@@ -48,7 +50,7 @@ def jobs_list(quiet: Optional[bool] = False) -> str:
         manual_command = template("$stat")
         # manual_command = '"' + manual_command + '"'
         print("manual_command", manual_command)
-        output = local(pre_cmd + "'" + manual_command + "'", capture=False)
+        output = cmd_runner.local(pre_cmd + "'" + manual_command + "'")
         string = (
             CRED + "The stat of your submitted job is shown"
             " in the table above!" + CEND
@@ -61,10 +63,10 @@ def jobs_list(quiet: Optional[bool] = False) -> str:
         #         manual_command
         #     )
         # )
-        # output = local(pre_cmd + str(manual_command) , capture=False)
+        # output = local(pre_cmd + str(manual_command))
 
     else:
-        output = run(template("$stat"), capture=quiet)
+        output =cmd_runner.run(template("$stat"))
 
         # One some machines (e.g. ARCHER2) output returns a tuple.
         # This branch isolates the string part of it.
@@ -103,16 +105,16 @@ def cancel_job(jobID: Optional[str] = None) -> None:
         and isinstance(env.dispatch_jobs_on_localhost, bool)
         and env.dispatch_jobs_on_localhost
     ):
-        local(template(template.template("$cancel_job_command")))
+        cmd_runner.local(template(template.template("$cancel_job_command")))
     elif env.manual_sshpass:
         sshpass_args = "-e" if env.env_sshpass else "-f '%(sshpass)s'" % env
         sshpass_cmd = f"sshpass {sshpass_args}"
         pre_cmd = sshpass_cmd + " ssh %(username)s@%(remote)s " % env
         manual_command = template("$cancel_job_command $jobID")
-        local(pre_cmd + "'" + manual_command + "'", capture=False)
+        cmd_runner.local(pre_cmd + "'" + manual_command + "'")
 
     else:
-        run(template(template("$cancel_job_command")))
+        cmd_runner.run(template(template("$cancel_job_command")))
 
 
 def check_jobs_dispatched_on_remote_machine() -> None:

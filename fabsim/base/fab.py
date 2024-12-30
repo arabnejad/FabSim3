@@ -1,4 +1,4 @@
-import math
+
 import os
 import re
 import subprocess
@@ -15,550 +15,23 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table, box
 
-# from fabsim.base.utils import add_prefix, print_prefix
-from fabsim.base.decorators import load_plugin_env_vars, task
-from fabsim.base.env import env
+from fabsim.base.job_manager import job_manager
+from fabsim.base.decorators import task
+from fabsim.base.environment_manager import env
 from fabsim.base.manage_remote_job import *
 from fabsim.base.MultiProcessingPool import MultiProcessingPool
-from fabsim.base.networks import local, put, rsync_project, run
+from fabsim.base.command_runner import cmd_runner
 from fabsim.base.setup_fabsim import *
-from fabsim.deploy.machines import *
+# from fabsim.deploy._machines import *
+import inspect
 from fabsim.deploy.templates import (
     script_template_content,
     script_templates,
     template,
 )
+from fabsim.base.error_handler import FabSimError
 
-
-@beartype
-def get_plugin_path(name: str) -> str:
-    """
-    Get the local base path of input plugin name.
-
-    Args:
-        name (str): the name of pluing
-
-    Returns:
-        str: the path of plugin
-
-    Raises:
-        RuntimeError: if the requested plugin is not installed in the
-            local system
-    """
-    plugin_path = os.path.join(env.localroot, "plugins", name)
-    if not os.path.exists(plugin_path):
-        raise RuntimeError(
-            f"The requested plugin {name} does not exist ({plugin_path}).\n"
-            "you can install it by typing:\n\t"
-            f"fabsim localhost install_plugin:{name}"
-        )
-    return plugin_path
-
-
-@task
-@beartype
-def put_results(name: str) -> None:
-    """
-    Transfer result files to a remote. Local path to find result
-    directories is specified in machines_user.json. This method is not
-    intended for normal use, but is useful when the local machine
-    cannot have an entropy mount, so that results from a local machine
-    can be sent to entropy, via 'fab legion fetch_results; fab entropy
-    put_results'
-
-    Args:
-        name (str, optional): the name of results directory
-    """
-    with_job(name)
-    run(template("mkdir -p $job_results"))
-    if env.manual_gsissh:
-        local(
-            template(
-                "globus-url-copy -p 10 -cd -r -sync "
-                "file://$job_results_local/ "
-                "gsiftp://$remote/$job_results/"
-            )
-        )
-    else:
-        rsync_project(
-            local_dir=env.job_results_local + "/", remote_dir=env.job_results
-            )
-
-
-@task
-@beartype
-def fetch_results(
-    name: Optional[str] = "",
-    regex: Optional[str] = "",
-    files: Optional[str] = None,
-    debug: Optional[bool] = False,
-) -> None:
-    """
-    Fetch results of remote jobs to local result store. Specify a job
-    name to transfer just one job. Local path to store results is
-    specified in machines_user.json, and should normally point to a
-    mount on entropy, i.e. /store4/blood/username/results.
-    If you can't mount entropy, `put results` can be useful, via
-    `fab legion fetch_results; fab entropy put_results`
-
-    Args:
-        name (str, optional): the job name, it no name provided, all
-            directories from `fabric_dir` will be fetched
-        regex (str, optional): the matching pattern
-        files (str, optional): the list of files need to fetched from the
-            remote machine. The list of file should be passed as string, and
-            split by `;`. For example, to fetch only `out.csv` and `env.yml`
-            files, you should pass `files="out.csv;env.yml" to this function.
-        debug (bool, optional): it `True`, all `env` variable will shown.
-    """
-    fetch_files = []
-    if files is not None:
-        fetch_files = files.split(";")
-    includes_files = ""
-    if len(fetch_files) > 0:
-        includes_files = " ".join(
-            [
-                *["--include='*/' "],
-                *["--include='{}' ".format(file) for file in fetch_files],
-                *["--exclude='*'  "],
-                *["--prune-empty-dirs "],
-            ]
-        )
-
-    env.job_results, env.job_results_local = with_job(name)
-
-    # check if the local results directory exists or not
-    if not os.path.isdir(env.job_results_local):
-        os.makedirs(env.job_results_local)
-
-    if env.manual_sshpass:
-        sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
-        local(
-            template(
-                "rsync -pthrvz -e 'sshpass {} ssh -p $port' {}"
-                "$username@$remote:$job_results/{}  "
-                "$job_results_local".format(
-                    sshpass_args, includes_files, regex
-                )
-            )
-        )
-    elif env.manual_gsissh:
-        local(
-            template(
-                "globus-url-copy -cd -r -sync {}"
-                "gsiftp://$remote/$job_results/{} "
-                "file://$job_results_local/".format(includes_files, regex)
-            )
-        )
-    else:
-        local(
-            template(
-                "rsync -pthrvz -e 'ssh -p $port' {}"
-                "$username@$remote:$job_results/{} "
-                "$job_results_local".format(includes_files, regex)
-            )
-        )
-
-
-@task
-@beartype
-def fetch_configs(config: str) -> None:
-    """
-    Fetch config files from the remote machine, via `rsync`.
-
-    Example Usage:
-
-    ```sh
-    fab eagle_vecma fetch_configs:mali
-    ```
-
-    Args:
-        config (str): the name of config directory
-    """
-    with_config(config)
-    if env.manual_gsissh:
-        local(
-            template(
-                "globus-url-copy -cd -r -sync "
-                "gsiftp://$remote/$job_config_path/ "
-                "file://$job_config_path_local/"
-            )
-        )
-    else:
-        local(
-            template(
-                "rsync -pthrvz $username@$remote:$job_config_path/ "
-                "$job_config_path_local"
-            )
-        )
-
-
-@task
-@beartype
-def clear_results(name: str) -> None:
-    """
-    Completely wipe all result files from the remote.
-
-    Args:
-        name (str, optional): the name of result folder
-    """
-    with_job(name)
-    run(template("rm -rf $job_results_contents"))
-
-
-@beartype
-def execute(task: Callable, *args, **kwargs) -> None:
-    """
-    Execute a task (callable function).
-    The input arg `task` can be an actual callable function or its name.
-
-    The target function can be warped by @task or not.
-
-    """
-    f_globals = inspect.stack()[1][0].f_globals
-    if callable(task):
-        task(*args, **kwargs)
-    elif task in f_globals:
-        f_globals[task](*args, **kwargs)
-    else:
-        msg = (
-            "The request task [green3]{}[/green3] passed to execute() "
-            "function can not be found !!!".format(task)
-        )
-        console = Console()
-        console.print(
-            Panel(
-                "{}".format(msg),
-                title="[red1]Error[/red1]",
-                border_style="red1",
-                expand=False,
-            )
-        )
-
-
-@beartype
-def put_configs(config: str) -> None:
-    """
-    Transfer config files to the remote machine, via `rsync`.
-
-    Args:
-        config (str): Specify a config directory
-    """
-    with_config(config)
-
-    # by using get_setup_fabsim_dirs_string(), the FabSim3 directories will
-    # created automatically whenever a config file is uploaded.
-
-    run(
-        template("{}; mkdir -p $job_config_path".format(
-            get_setup_fabsim_dirs_string()
-            )
-        )
-    )
-
-    rsync_delete = False
-    if (
-        hasattr(env, "prevent_results_overwrite")
-        and env.prevent_results_overwrite == "delete"
-    ):
-        rsync_delete = True
-
-    if env.ssh_monsoon_mode:
-        # scp a monsoonfab:~/ ; ssh monsoonfab -C “scp ~/a xcscfab:~/”
-        local(
-            template(
-                "scp -r $job_config_path_local "
-                "$remote:$config_path/ && "
-                "ssh $remote -C "
-                "'scp -r $job_config_path "
-                "$remote_compute:$config_path/'"
-            )
-        )
-
-    elif env.manual_sshpass:
-        sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
-        local(
-            template(
-                f"rsync -pthrvz --rsh='sshpass {sshpass_args} ssh  -p 22  ' "
-                "$job_config_path_local/ "
-                "$username@$remote:$job_config_path/"
-            )
-        )
-    elif env.manual_ssh:
-        local(
-            template(
-                "rsync -pthrvz "
-                "$job_config_path_local/ "
-                "$username@$remote:$job_config_path/"
-            )
-        )
-    elif env.manual_gsissh:
-        # TODO: implement prevent_results_overwrite here
-        local(
-            template(
-                "globus-url-copy -p 10 -cd -r -sync "
-                "file://$job_config_path_local/ "
-                "gsiftp://$remote/$job_config_path/"
-            )
-        )
-    else:
-        rsync_project(
-            local_dir=env.job_config_path_local + "/",
-            remote_dir=env.job_config_path,
-            delete=rsync_delete,
-        )
-
-
-def calc_nodes() -> None:
-    """
-    Calculate the required number of node needs for the job execution.
-    This will set the `env.nodes` which will be used to set the node request
-    number in the job script.
-
-    !!! tip
-        If we're not reserving whole nodes, then if we request less than one
-        node's worth of cores, need to keep N<=n
-    """
-    env.coresusedpernode = env.corespernode
-    if int(env.coresusedpernode) > int(env.cores):
-        env.coresusedpernode = env.cores
-    env.nodes = int(math.ceil(float(env.cores) / float(env.coresusedpernode)))
-
-
-def calc_total_mem() -> None:
-    """
-    Calculate the total amount of memory for the job script.
-
-    !!! tip
-        in terms of using `PJ` option, please make sure you set the total
-        required memory for all sub-tasks.
-
-    """
-    # for qcg scheduler, #QCG memory requires total memory for all nodes
-    if not hasattr(env, "memory"):
-        env.memory = "2GB"
-
-    mem_size = int(re.findall("\\d+", str(env.memory))[0])
-    try:
-        mem_unit_str = re.findall("[a-zA-Z]+", str(env.memory))[0]
-    except Exception:
-        mem_unit_str = ""
-
-    if mem_unit_str.upper() == "GB" or mem_unit_str.upper() == "G":
-        mem_unit = 1000
-    else:
-        mem_unit = 1
-
-    if hasattr(env, "PJ") and env.PJ.lower() == "true":
-        # env.total_mem = mem_size * int(env.PJ_size) * mem_unit
-        env.total_mem = env.memory
-    else:
-        env.total_mem = mem_size * int(env.nodes) * mem_unit
-
-
-@beartype
-def find_config_file_path(
-    name: str,
-    ExceptWhenNotFound: Optional[bool] = True
-) -> str:
-    """
-    Find the config file path
-
-    Args:
-        name (str): Description
-        ExceptWhenNotFound (bool, optional): Description
-
-    Returns:
-        Union[bool, str]: - `False`: if the input config name not found
-        - the path of input config name
-    """
-    # Prevent of executing localhost runs on the FabSim3 root directory
-    if env.host == "localhost" and env.work_path == env.fabsim_root:
-        msg = (
-            "The localhost run dir is same as your FabSim3 folder\n"
-            "To avoid any conflict of config folder, please consider\n"
-            "changing your home_path_template variable\n"
-            "you can easily modify it by updating localhost entry in\n"
-            "your FabSim3/fabsim/deploy/machines_user.yml file\n\n"
-            "Here is the suggested changes:\n\n"
-        )
-
-        solution = "localhost:\n"
-        solution += "   ...\n"
-        solution += '   home_path_template: "{}/localhost_exe"'.format(
-            env.localroot
-        )
-        rich_print(
-            Panel(
-                "{}[green3]{}[/green3]".format(msg, solution),
-                title="[red1]Error[/red1]",
-                border_style="red1",
-                expand=False,
-            )
-        )
-        exit()
-
-    path_used = None
-    for p in env.local_config_file_path:
-        config_file_path = os.path.join(p, name)
-        if os.path.exists(config_file_path):
-            path_used = config_file_path
-
-    if path_used is None:
-        if ExceptWhenNotFound:
-            raise Exception(
-                "Error: config file directory '{}' " "not found in: ".format(
-                    name
-                ),
-                env.local_config_file_path,
-            )
-        else:
-            return False
-    return path_used
-
-
-@beartype
-def with_config(name: str):
-    """
-    Internal: augment the fabric environment with information
-      regarding a particular configuration name.
-
-    Definitions created:
-
-    - `job_config_path`: the remote location where the config files for the
-            job should be stored
-    - `job_config_path_local`: the local location where the config files for
-            the job may be found
-
-    Args:
-        name (str): the name of config directory
-    """
-    env.config = name
-    env.job_config_path = os.path.join(env.config_path, name + env.job_desc)
-
-    path_used = find_config_file_path(name)
-
-    env.job_config_path_local = os.path.join(path_used)
-    env.job_config_contents = os.path.join(env.job_config_path, "*")
-    env.job_config_contents_local = os.path.join(
-        env.job_config_path_local, "*"
-    )
-    # name of the job sh submission script.
-    env.job_name_template_sh = template("{}.sh".format(env.job_name_template))
-
-
-@beartype
-def add_local_paths(plugin_name: str) -> None:
-    """
-    Updates `env` variables for the input plugin name
-
-    Args:
-        plugin_name (str): plugin name
-    """
-    # This variable encodes the default location for templates.
-    env.local_templates_path.insert(
-        0, os.path.join(env.localroot, "plugins", plugin_name, "templates")
-    )
-    # This variable encodes the default location for config files.
-    env.local_config_file_path.insert(
-        0, os.path.join(env.localroot, "plugins", plugin_name, "config_files")
-    )
-
-
-@beartype
-def with_template_job(
-    ensemble_mode: Optional[bool] = False, label: Optional[str] = None
-) -> Tuple[str, str]:
-    """
-    Determine a generated job name from environment parameters,
-    and then define additional environment parameters based on it.
-
-    Args:
-        ensemble_mode (bool, optional): determines if the job is an ensemble
-            simulation or not
-        label (str, optional): the label of job
-
-    Returns:
-        Tuple[str, str]: returns `job_results, job_results_local` env variables
-            filled based on job and label name
-    """
-
-    # The name is now depending of the label name
-    name = template(env.job_name_template)
-    if label and not ensemble_mode:
-        name = "_".join((label, name))
-
-    job_results, job_results_local = with_job(
-        name=name, ensemble_mode=ensemble_mode, label=label
-    )
-
-    return job_results, job_results_local
-
-
-@beartype
-def with_job(
-    name: str,
-    ensemble_mode: Optional[bool] = False,
-    label: Optional[str] = None,
-) -> Tuple[str, str]:
-    """
-    Augment the fabric environment with information regarding a particular
-    job name.
-
-    Definitions created:
-
-    - `job_results`: the remote location where job results should be stored
-    - `job_results_local`: the local location where job results should be
-          stored
-
-
-    Args:
-        name (str): the job name
-        ensemble_mode (bool, optional): determines if the job is an ensemble
-            simulation or not
-        label (str, optional): the label of job
-
-    Returns:
-        Tuple[str, str]: two string value
-
-        - job_results: the remote location where job results should be stored
-        - job_results_local: the local location where job results should
-            be stored
-    """
-    env.name = name
-    if not ensemble_mode:
-        job_results = env.pather.join(env.results_path, name)
-        job_results_local = os.path.join(env.local_results, name)
-    else:
-        job_results = "{}/RUNS/{}".format(
-            env.pather.join(env.results_path, name), label
-        )
-        job_results_local = "{}/RUNS/{}".format(
-            os.path.join(env.local_results, name), label
-        )
-
-    env.job_results_contents = env.pather.join(job_results, "*")
-    env.job_results_contents_local = os.path.join(job_results_local, "*")
-
-    # Template name is now depending of the label of the job when needed
-    if label is not None:
-        env.job_name_template_sh = "{}_{}.sh".format(name, label)
-    else:
-        env.job_name_template_sh = "{}.sh".format(name)
-
-    return job_results, job_results_local
-
-
-def with_template_config() -> None:
-    """
-    Determine the name of a used or generated config from environment
-    parameters, and then define additional environment parameters based
-    on it.
-    """
-    with_config(template(env.config_name_template))
-
-
-def job(*job_args, prepare_only=False):
+def job(job_args : dict, prepare_only=False):
     """
     Internal low level job launcher.
     Parameters for the job are determined from the prepared fabric environment
@@ -574,26 +47,23 @@ def job(*job_args, prepare_only=False):
 
     Returns the generate jobs scripts for submission on the remote machine.
     """
-    args = {}
-    for adict in job_args:
-        args = dict(args, **adict)
-
     # check if with_config function is already called or not
     if not hasattr(env, "job_config_path"):
-        raise RuntimeError(
-            "Function with_config did NOT called, "
-            "Please call it before calling job()"
+        raise FabSimError.RuntimeError(
+            "Function with_config did NOT called, ",
+            details="Please call it before calling job()"
         )
 
-    update_environment(args)
-    #   Add label, mem, core to env.
-    calc_nodes()
-    calc_total_mem()
+    env.update(job_args)
 
-    if "sweepdir_items" in args:
-        env.ensemble_mode = True
+    #   Add label, mem, core to env.
+    job_manager.calculate_required_nodes()
+    job_manager.calculate_total_memory()
+
+    if "sweepdir_items" in job_args:
+        env.is_ensemble = True
     else:
-        env.ensemble_mode = False
+        env.is_ensemble = False
 
     ########################################################
     #  temporary folder to save job files/folders/scripts  #
@@ -618,7 +88,8 @@ def job(*job_args, prepare_only=False):
     #####################################
     #       job preparation phase       #
     #####################################
-    msg = "tmp_work_path = {}".format(env.tmp_work_path)
+    msg = "tmp_work_path = {}\n\n{}".format(
+        env.tmp_work_path, yaml.dump(job_args, default_flow_style=False).rstrip())
     rich_print(
         Panel.fit(
             msg,
@@ -629,19 +100,17 @@ def job(*job_args, prepare_only=False):
 
     print("Submit tasks to multiprocessingPool : start ...")
 
-    print("args", args)
-
-    if "replica_start_number" in args:
-        if isinstance(args["replica_start_number"], list):
+    if "replica_start_number" in job_args:
+        if isinstance(job_args["replica_start_number"], list):
             env.replica_start_number = list(
-                int(x) for x in args["replica_start_number"]
+                int(x) for x in job_args["replica_start_number"]
             )
         else:
-            env.replica_start_number = int(args["replica_start_number"])
+            env.replica_start_number = int(job_args["replica_start_number"])
     else:
         env.replica_start_number = 1
 
-    if env.ensemble_mode is True:
+    if env.is_ensemble is True:
         for index, task_label in enumerate(env.sweepdir_items):
             if isinstance(env.replica_start_number, list):
                 replica_start_number = env.replica_start_number[index]
@@ -651,14 +120,14 @@ def job(*job_args, prepare_only=False):
             POOL.add_task(
                 func=job_preparation,
                 func_args=dict(
-                    ensemble_mode=env.ensemble_mode,
+                    is_ensemble=env.is_ensemble,
                     label=task_label,
                     replica_start_number=replica_start_number,
                 ),
             )
     else:
-        args["replica_start_number"] = env.replica_start_number
-        POOL.add_task(func=job_preparation, func_args=args)
+        job_args["replica_start_number"] = env.replica_start_number
+        POOL.add_task(func=job_preparation, func_args=job_args)
 
     print("Submit tasks to multiprocessingPool : done ...")
     job_scripts_to_submit = POOL.wait_for_tasks()
@@ -706,16 +175,32 @@ def job(*job_args, prepare_only=False):
             )
             for job_script in job_scripts_to_submit:
                 job_submission(dict(job_script=job_script))
-            print("submitted job script = \n{}".format(
-                pformat(job_scripts_to_submit)
-                )
-            )
+
+
+    #####################################
+    #       Fetching result phase       #
+    #####################################
+    msg = (
+        "All jobs are submitted to {}\n"
+        "Use:\n\n"
+        "   [bright_yellow]fabsim {} fetch_results[/bright_yellow]\n\n"
+        "to copy the results back to localhost\n\n"
+        "Please make sure, all submitted jobs are finished on remote "
+        "machine before calling fetch_results command".format(env.machine_name,env.machine_name)
+    )
+    rich_print(
+        Panel.fit(
+            msg,
+            title="[orange_red1]Fetching result[/orange_red1]",
+            border_style="orange_red1",
+        )
+    )
 
     # POOL.shutdown_threads()
     return job_scripts_to_submit
 
 
-def job_preparation(*job_args):
+def job_preparation(job_args: dict):
     """
     here, all job folders and scripts will be created in the temporary folder
         `<tmp_folder>/{results,scripts}`, later, in job_transmission,
@@ -724,31 +209,27 @@ def job_preparation(*job_args):
     improve the stability of job submission workflow which can be compromised
     by high parallel SSH connection
     """
-    pprint(job_args)
 
-    args = {}
-    for adict in job_args:
-        args = dict(args, **adict)
 
-    if "label" in args:
-        env.label = args["label"]
+    if "label" in job_args:
+        env.label = job_args["label"]
     else:
         env.label = ""
 
     return_job_scripts = []
 
     for i in range(
-        args["replica_start_number"],
-        int(env.replicas) + args["replica_start_number"],
+        job_args["replica_start_number"],
+        int(env.replicas) + job_args["replica_start_number"],
     ):
         env.replica_number = i
 
-        env.job_results, env.job_results_local = with_template_job(
-            ensemble_mode=env.ensemble_mode, label=env.label
+        env.job_results, env.job_results_local = job_manager.generate_job_with_template(
+            is_ensemble=env.is_ensemble, job_label=env.label
         )
 
         if int(env.replicas) > 1:
-            if env.ensemble_mode is False:
+            if env.is_ensemble is False:
                 env.job_results += "_replica_" + str(i)
             else:
                 env.job_results += "_" + str(i)
@@ -758,7 +239,8 @@ def job_preparation(*job_args):
         )
 
         env["job_name"] = env.name[0: env.max_job_name_chars]
-        complete_environment()
+        # remote_machines.complete_environment()
+        env.complete_environment()
 
         env.run_command = template(env.run_command)
 
@@ -771,7 +253,7 @@ def job_preparation(*job_args):
                 "$config_dir/* .".format(env.job_config_path)
             )
 
-        if env.ensemble_mode:
+        if env.is_ensemble:
             env.run_prefix += (
                 "\n\n"
                 "# copy files from SWEEP folder\n"
@@ -806,7 +288,7 @@ def job_preparation(*job_args):
         # Initial new name if we have replicas or ensemble
 
         if int(env.replicas) > 1:
-            if env.ensemble_mode is False:
+            if env.is_ensemble is False:
                 dst_script_name = base + "_replica_" + str(i) + extension
             else:
                 dst_script_name = base + "_" + str(i) + extension
@@ -861,7 +343,7 @@ def job_preparation(*job_args):
     return return_job_scripts
 
 
-def job_transmission(*job_args):
+def job_transmission():
     """
     here, we only transfer all generated files/folders from
 
@@ -871,9 +353,6 @@ def job_transmission(*job_args):
 
     `<target_work_dir>/{results,scripts}`
     """
-    args = {}
-    for adict in job_args:
-        args = dict(args, **adict)
 
     if (
         hasattr(env, "prevent_results_overwrite")
@@ -904,7 +383,7 @@ def job_transmission(*job_args):
                     )
                 )
 
-                run(
+                cmd_runner.run(
                     template(
                         "{} ; ssh $remote_compute -C"
                         "'{}'".format(
@@ -915,7 +394,7 @@ def job_transmission(*job_args):
                 )
 
             else:
-                run(
+                cmd_runner.run(
                     template(
                         "mkdir -p {} && "
                         "mkdir -p {}/results &&"
@@ -943,7 +422,7 @@ def job_transmission(*job_args):
             #    )
             # )
             # scp a monsoonfab:~/ ; ssh monsoonfab -C “scp ~/a xcscfab:~/”
-            local(
+            cmd_runner.local(
                 template(
                     "ssh $remote -C "
                     "'mkdir -p {}' && "
@@ -964,7 +443,7 @@ def job_transmission(*job_args):
             sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
             # TODO: maybe the better option here is to overwrite the
             #       rsync_project
-            local(
+            cmd_runner.local(
                 template(
                     "rsync -pthrvz "
                     f"--rsh='sshpass {sshpass_args} ssh  -p 22  ' "
@@ -973,7 +452,7 @@ def job_transmission(*job_args):
             )
         elif env.manual_gsissh:
             # TODO: implement prevent_results_overwrite for this option
-            local(
+            cmd_runner.local(
                 template(
                     "globus-url-copy -p 10 -cd -r -sync "
                     "file://{}/ "
@@ -981,10 +460,10 @@ def job_transmission(*job_args):
                 )
             )
         else:
-            rsync_project(local_dir=sync_src + "/", remote_dir=sync_dst)
+            cmd_runner.rsync_project(local_dir=sync_src + "/", remote_dir=sync_dst)
 
 
-def job_submission(*job_args):
+def job_submission(job_args : dict):
     """
     here, all prepared job scrips will be submitted to the
     target remote machine
@@ -993,20 +472,15 @@ def job_submission(*job_args):
         please make sure to pass the list of job scripts be summited as
         an input to this function
     """
-    CRED = "\33[31m"
-    CEND = "\33[0m"
-    args = {}
-    for adict in job_args:
-        args = dict(args, **adict)
 
-    job_script = args["job_script"]
+    job_script = job_args["job_script"]
 
     if (
         hasattr(env, "dispatch_jobs_on_localhost")
         and isinstance(env.dispatch_jobs_on_localhost, bool)
         and env.dispatch_jobs_on_localhost
     ):
-        local(template("$job_dispatch " + job_script))
+        cmd_runner.local(template("$job_dispatch " + job_script))
         print("job dispatch is done locally\n")
 
     elif not env.get("noexec", False):
@@ -1019,7 +493,7 @@ def job_submission(*job_args):
             exit()
 
         elif env.remote == "localhost":
-            run(
+            cmd_runner.run(
                 cmd="{} && {}".format(
                     env.run_prefix,
                     template("$job_dispatch {}".format(job_script)),
@@ -1034,9 +508,9 @@ def job_submission(*job_args):
                 # Allow for variable references in job_dispatch definition
                 number_of_iterations=2,
             )
-            run(cmd, cd=env.pather.dirname(job_script))
+            cmd_runner.run(cmd, cd=env.pather.dirname(job_script))
         else:
-            run(
+            cmd_runner.run(
                 cmd=template(
                     "$job_dispatch {}".format(job_script),
                     # Allow for variable references in job_dispatch definition
@@ -1044,19 +518,6 @@ def job_submission(*job_args):
                 ),
                 cd=env.pather.dirname(job_script),
             )
-
-    # print(
-    #     "Use `fab {} fetch_results` to copy the results "
-    #     "back to localhost.".format(env.machine_name)
-    # )
-    print(
-        "Use "
-        + CRED
-        + "fabsim {} fetch_results".format(env.machine_name)
-        + CEND
-        + " to copy the results "
-        "back to local machine!"
-    )
 
     return [job_script]
 
@@ -1083,14 +544,14 @@ def ensemble2campaign(
             run_id = int(run.split("_")[-1])
             # if X > skip copy results back
             if run_id > int(skip):
-                local(
+                cmd_runner.local(
                     "rsync -pthrvz {}/RUNS/{} {}/runs".format(
                         results_dir, run, campaign_dir
                     )
                 )
     # copy all runs from FabSim results directory to campaign directory
     else:
-        local("rsync -pthrvz {}/RUNS/ {}/runs".format(
+        cmd_runner.local("rsync -pthrvz {}/RUNS/ {}/runs".format(
             results_dir, campaign_dir)
         )
 
@@ -1112,14 +573,16 @@ def campaign2ensemble(
             of samples will then not be computed.
     """
     # update_environment(args)
-    config_path = find_config_file_path(config, ExceptWhenNotFound=False)
-    if config_path is False:
-        local("mkdir -p {}/{}".format(env.local_config_file_path[-1], config))
-        config_path = "{}/{}".format(env.local_config_file_path[-1], config)
-    sweep_dir = config_path + "/SWEEP"
-    local("mkdir -p {}".format(sweep_dir))
+    try:
+        config_path = job_manager.get_config_file_path(config)
+    except FabSimError.FileNotFoundError:
+        config_path = os.path.join(env.local_config_file_path[-1], config)
+        cmd_runner.local("mkdir -p {}".format(config_path))
 
-    local("rm -rf {}/*".format(sweep_dir))
+    sweep_dir = os.path.join(config_path,"SWEEP")
+    cmd_runner.local("mkdir -p {}".format(sweep_dir))
+
+    cmd_runner.local("rm -rf {}{}*".format(sweep_dir,os.sep))
 
     # if skip > 0: only copy the run directories run_X for X > skip to the
     # FabSim3 sweep directory. This avoids recomputing already computed samples
@@ -1134,13 +597,13 @@ def campaign2ensemble(
             # if X > skip, copy run directory to the sweep dir
             if run_id > int(skip):
                 print("Copying {}".format(run))
-                local("rsync -pthrz {}/runs/{} {}".format(
+                cmd_runner.local("rsync -pthrz {}/runs/{} {}".format(
                     campaign_dir, run, sweep_dir
                     )
                 )
     # if skip = 0: copy all runs from EasyVVUQ run directort to the sweep dir
     else:
-        local("rsync -pthrz {}/runs/ {}".format(campaign_dir, sweep_dir))
+        cmd_runner.local("rsync -pthrz {}/runs/ {}".format(campaign_dir, sweep_dir))
 
 
 @beartype
@@ -1180,22 +643,23 @@ def run_ensemble(
             - if `SWEEP` directory is empty.
 
     """
-    update_environment(args)
+    # env.updateEnvironment(args)
+    env.update(args)
 
     if ";" in replica_start_number:
-        raise NotImplementedError(
+        raise NotImplementedError.NotImplementedError(
             "Multiple replica_start_numbers are not yet implemented for users."
         )
 
     if "script" not in env:
-        raise RuntimeError(
+        raise FabSimError.RuntimeError(
             "ERROR: run_ensemble function has been called,"
             "but the parameter 'script' was not specified."
         )
 
     # check if with_config function is already called
     if not hasattr(env, "job_config_path"):
-        raise RuntimeError(
+        raise FabSimError.RuntimeError(
             "Function with_config did NOT called, "
             "Please call it before calling run_ensemble()"
         )
@@ -1224,14 +688,14 @@ def run_ensemble(
                 error = "ERROR: upsample item: "
                 error += f"{set(upsample)-set(sweepdir_items)}"
                 error += "not found in SWEEP folder"
-                raise RuntimeError(error)
+                raise FabSimError.RuntimeError(error)
     else:
         # in case of reading SWEEP folder from remote machine, we need a
         # SSH tunnel and then list the directories
-        sweepdir_items = run("ls -1 {}".format(sweep_dir)).splitlines()
+        sweepdir_items = cmd_runner.run("ls -1 {}".format(sweep_dir)).splitlines()
     print("reading SWEEP folder from remote machine")
     if len(sweepdir_items) == 0:
-        raise RuntimeError(
+        raise FabSimError.RuntimeError(
             "ERROR: no files where found in the sweep_dir : {}".format(
                 sweep_dir
             )
@@ -1244,18 +708,21 @@ def run_ensemble(
         )
 
     if execute_put_configs is True:
-        execute(put_configs, config)
+        job_manager.transfer_config_files(config)
+        # execute(put_configs, config)
+
 
     # output['everything'] = False
-    job_scripts_to_submit = job(
-        dict(
-            ensemble_mode=True,
-            sweepdir_items=sweepdir_items,
-            sweep_dir=sweep_dir,
-            replica_start_number=replica_start_number,
-        ),
-        prepare_only=True,
-    )
+    # job_scripts_to_submit = job(
+    #     dict(
+    #         is_ensemble=True,
+    #         sweepdir_items=sweepdir_items,
+    #         sweep_dir=sweep_dir,
+    #         replica_start_number=replica_start_number,
+    #     ),
+    #     prepare_only=True,
+    # )
+
 
     if hasattr(env, "PJ_TYPE"):
         pj_type = env.PJ_TYPE.lower()
@@ -1270,7 +737,7 @@ def run_ensemble(
         # If PJ_TYPE is not set, submit the jobs normally
         job_scripts_to_submit = job(
             dict(
-                ensemble_mode=True,
+                is_ensemble=True,
                 sweepdir_items=sweepdir_items,
                 sweep_dir=sweep_dir,
                 replica_start_number=replica_start_number,
@@ -1352,7 +819,7 @@ def run_radical(job_scripts_to_submit: list, venv="False"):
         f.write(radical_script_content)
 
     # Transfer Radical configuration script to remote machine
-    local(
+    cmd_runner.local(
         template(
             "rsync -pthrvz {}/ $username@$remote:{}/".format(
                 local_working_dir, remote_working_dir
@@ -1382,7 +849,7 @@ def run_radical(job_scripts_to_submit: list, venv="False"):
     env.batch_header = env.radical_PJ_header
     env.submit_job = True
 
-    job(dict(ensemble_mode=False, label="radical-PJ-header", NoEnvScript=True))
+    job(dict(is_ensemble=False, label="radical-PJ-header", NoEnvScript=True))
     env.batch_header = backup_header
     env.NoEnvScript = False
 
@@ -1417,7 +884,7 @@ def run_qcg(job_scripts_to_submit: list, venv: bool):
     env.batch_header = env.PJ_PYheader
     job_scripts_to_submit = job(
         dict(
-            ensemble_mode=False, label="PJ_PYheader", NoEnvScript=True
+            is_ensemble=False, label="PJ_PYheader", NoEnvScript=True
         )
     )
 
@@ -1442,7 +909,7 @@ def run_qcg(job_scripts_to_submit: list, venv: bool):
     PJ_CMD.append(f"python3 {env.PJ_PATH}")
 
     env.run_QCG_PilotJob = "\n".join(PJ_CMD)
-    job(dict(ensemble_mode=False, label="PJ_header", NoEnvScript=True))
+    job(dict(is_ensemble=False, label="PJ_header", NoEnvScript=True))
     env.batch_header = backup_header
     env.NoEnvScript = False
 
@@ -1500,10 +967,10 @@ def install_packages(venv: bool = "False"):
     )
 
     tmp_app_dir = "{}/tmp_app".format(env.localroot)
-    local("mkdir -p {}".format(tmp_app_dir))
+    cmd_runner.local("mkdir -p {}".format(tmp_app_dir))
 
     for dep in config["packages"]:
-        local("pip3 download --no-binary=:all: -d {} {}".format(
+        cmd_runner.local("pip3 download --no-binary=:all: -d {} {}".format(
                 tmp_app_dir, dep
             )
         )
@@ -1516,12 +983,12 @@ def install_packages(venv: bool = "False"):
         )
 
     # Create  directory in the remote machine to store dependency packages
-    run(template("mkdir -p {}".format(env.app_repository)))
+    cmd_runner.run(template("mkdir -p {}".format(env.app_repository)))
 
     # Send the dependencies (and the dependencies of dependencies) to the
     # remote machine
     for whl in os.listdir(tmp_app_dir):
-        local(
+        cmd_runner.local(
             template(
                 "rsync -pthrvz -e 'ssh -p $port'  {}/{} "
                 "$username@$remote:$app_repository".format(
@@ -1585,11 +1052,12 @@ def install_packages(venv: bool = "False"):
 
     install_dict = dict(script="script")
     # env.script = "script"
-    update_environment(install_dict)
+    # env.updateEnvironment(install_dict)
+    env.update(install_dict)
 
     # Determine a generated job name from environment parameters
     # and then define additional environment parameters based on it.
-    env.job_results, env.job_results_local = with_template_job()
+    env.job_results, env.job_results_local = job_manager.generate_job_with_template()
 
     # Create job script based on "sbatch header" and script created above in
     # deploy/.jobscript/
@@ -1601,13 +1069,13 @@ def install_packages(venv: bool = "False"):
     )
 
     # Send Install script to remote machine
-    put(env.job_script, env.dest_name)
+    cmd_runner.put(env.job_script, env.dest_name)
     #
-    run(template("mkdir -p $job_results"))
+    cmd_runner.run(template("mkdir -p $job_results"))
     with cd(env.pather.dirname(env.job_results)):
-        run(template("{} {}".format(env.job_dispatch, env.dest_name)))
+        cmd_runner.run(template("{} {}".format(env.job_dispatch, env.dest_name)))
 
-    local("rm -rf {}".format(tmp_app_dir))
+    cmd_runner.local("rm -rf {}".format(tmp_app_dir))
 
 
 @task
@@ -1633,10 +1101,10 @@ def install_app(name="", external_connexion="no", venv="False"):
     # Offline cluster installation - --user install
     # Temporary folder
     tmp_app_dir = "{}/tmp_app".format(env.localroot)
-    local("mkdir -p {}".format(tmp_app_dir))
+    cmd_runner.local("mkdir -p {}".format(tmp_app_dir))
 
     # First download all the Miniconda3 installation script
-    local(
+    cmd_runner.local(
         "wget {} -O {}/miniconda.sh".format(
             config["Miniconda-installer"]["repository"], tmp_app_dir
         )
@@ -1645,14 +1113,14 @@ def install_app(name="", external_connexion="no", venv="False"):
     # Install app-specific requirements
 
     if name == "RADICAL-Pilot":
-        local("pip3 install radical.pilot")
+        cmd_runner.local("pip3 install radical.pilot")
 
     if name == "QCG-PilotJob":
-        local("pip3 install -r " + env.localroot + "/qcg_requirements.txt")
+        cmd_runner.local("pip3 install -r " + env.localroot + "/qcg_requirements.txt")
 
     # Next download all the additional dependencies
     for dep in info["additional_dependencies"]:
-        local("pip3 download --no-binary=:all: -d {} {}".format(
+        cmd_runner.local("pip3 download --no-binary=:all: -d {} {}".format(
             tmp_app_dir, dep
             )
         )
@@ -1669,18 +1137,18 @@ def install_app(name="", external_connexion="no", venv="False"):
     # but for the local plateform !
     # --> Possible Issue during the installation in the remote
     # (it's not a cross-plateform install yet)
-    local(
+    cmd_runner.local(
         "pip3 download --no-binary=:all: -d {} git+{}@v{}".format(
             tmp_app_dir, info["repository"], info["version"]
         )
     )
 
     # Create  directory in the remote machine to store dependency packages
-    run(template("mkdir -p {}".format(env.app_repository)))
+    cmd_runner.run(template("mkdir -p {}".format(env.app_repository)))
     # Send the dependencies (and the dependencies of dependencies) to the
     # remote machine
     for whl in os.listdir(tmp_app_dir):
-        local(
+        cmd_runner.local(
             template(
                 "rsync -pthrvz -e 'ssh -p $port'  {}/{} "
                 "$username@$remote:$app_repository".format(tmp_app_dir, whl)
@@ -1795,11 +1263,11 @@ def install_app(name="", external_connexion="no", venv="False"):
 
     install_dict = dict(script="script")
     # env.script = "script"
-    update_environment(install_dict)
+    env.updateEnvironment(install_dict)
 
     # Determine a generated job name from environment parameters
     # and then define additional environment parameters based on it.
-    env.job_results, env.job_results_local = with_template_job()
+    env.job_results, env.job_results_local = job_manager.generate_job_with_template()
 
     # Create job script based on "sbatch header" and script created above in
     # deploy/.jobscript/
@@ -1807,24 +1275,24 @@ def install_app(name="", external_connexion="no", venv="False"):
     env.job_script = script_templates(env.batch_header_install_app, env.script)
 
     # Create script's destination path to remote machine based on
-    run(template("mkdir -p $scripts_path"))
+    cmd_runner.run(template("mkdir -p $scripts_path"))
     env.dest_name = env.pather.join(
         env.scripts_path, env.pather.basename(env.job_script)
     )
 
     # Send Install script to remote machine
-    put(env.job_script, env.dest_name)
+    cmd_runner.put(env.job_script, env.dest_name)
     #
-    run(template("mkdir -p $job_results"))
+    cmd_runner.run(template("mkdir -p $job_results"))
 
     env.job_dispatch += " -q standard"
 
     print(env.job_dispatch)
     print(env.dest_name)
 
-    run(template("{} {}".format(env.job_dispatch, env.dest_name)))
+    cmd_runner.run(template("{} {}".format(env.job_dispatch, env.dest_name)))
 
-    local("rm -rf {}".format(tmp_app_dir))
+    cmd_runner.local("rm -rf {}".format(tmp_app_dir))
 
 
 def count_folders(dir_path: str, prefix: str):

@@ -2,17 +2,16 @@ from __future__ import print_function
 
 import os
 import subprocess
-from contextlib import contextmanager
+
 
 from beartype import beartype
 from beartype.typing import List, Optional, Tuple
-from fabric2 import Config, Connection
 
-from fabsim.base.env import env
+from fabsim.base.environment_manager import env
 from fabsim.base.utils import add_print_prefix
 from fabsim.deploy.templates import template
-
-
+from fabsim.base.error_handler import FabSimError
+from fabsim.base.ssh_connection import HostConnection
 @beartype
 def local(
     command: str,
@@ -33,7 +32,7 @@ def local(
         shell (None, optional): Description
     """
 
-    with add_print_prefix(prefix="local", color=196):
+    with add_print_prefix(prefix="local", color=36):
         print("{}".format(command))
 
     # set stdout and stderr for subprocess
@@ -48,20 +47,24 @@ def local(
     # execute the command on the local system
     try:
         p = subprocess.Popen(
-            command, cwd=cwd, shell=True, stdout=stdout, stderr=stderr
+            command, cwd=cwd, shell=True, stdout=stdout, stderr=subprocess.PIPE
         )
         # p.wait()
         # yield f"{command} Rsync process completed."
         (stdout, stderr) = p.communicate()
 
+
     except Exception as e:
-        raise RuntimeError("Unexpected error: {}".format(e))
+        raise FabSimError.RuntimeError("Unexpected error: {}".format(e))
         # sys.exit()
 
-    if p.returncode not in env.acceptable_err_subprocesse_ret_codes:
-        raise RuntimeError(
+    # Typically, returncode == 0 indicates that it ran successfully
+
+    if p.returncode != 0:
+        raise FabSimError.RuntimeError(
             "\nlocal() encountered an error (return code {})"
-            "while executing '{}'".format(p.returncode, command)
+            "while executing '{}'".format(p.returncode, command),
+            details="stderr : {}\n".format(stderr.decode("utf-8") if stderr else "NO OUTPUT")
         )
         # sys.exit(0)
 
@@ -71,76 +74,6 @@ def local(
     return (stdout, stderr)
 
 
-class HostConnection:
-    def __init__(self):
-        self.host_address = env.remote
-        self.user = env.username
-        self.port = env.port
-        self.use_sudo = env.use_sudo
-        self.pty = True
-
-    @contextmanager
-    def ssh_connection(self):
-        """
-        Make and establish a fabric ssh connection
-        """
-
-        conn = Connection(
-            host=self.host_address,
-            user=self.user,
-            port=self.port,
-            config=None,
-            gateway=None,
-            forward_agent=False,
-            connect_timeout=None,
-            connect_kwargs=None,
-            inline_ssh_env=False,
-        )
-
-        try:
-            print("host_address:", self.host_address)
-            print("user:", self.user)
-            print("port:", self.port)
-            # print('password:', self.password)
-            print("\x1b[6;30;42m" + "Opening a connection!" + "\x1b[0m")
-            conn.open()
-            yield conn
-        finally:
-            print("\x1b[6;30;45m" + "Closing a connection!" + "\x1b[0m")
-            conn.close()
-
-    def run_command(self, command, cd=None, capture=False):
-        """
-        exec a command on the target remote machine
-        """
-        # TODO: implement the hide options here
-
-        # this will load the login shell. this required to make sure
-        # the module command can be found during job execution
-        command = 'bash -l -c "{}"'.format(command)
-
-        # env.remote : localhost
-        # env.host_string : user@localhost
-        with add_print_prefix(
-            prefix="run on {}".format(env.host_string), color=196
-        ):
-            print("{}".format(command))
-
-        # (None, False, 'out', 'stdout', 'err', 'stderr', 'both', True)
-        hide = None
-        if capture is True:
-            # here, I only set to hide the stdout, and capture any stderr
-            hide = "out"
-        with add_print_prefix(prefix=env.host_string):
-            with self.ssh_connection() as conn:
-                run = conn.sudo if self.use_sudo else conn.run
-                if cd is None:
-                    result = run(command, pty=self.pty, hide=hide)
-
-                else:
-                    with conn.cd(cd):
-                        result = run(command, pty=self.pty, hide=hide)
-        return result.stdout
 
 
 @beartype
@@ -170,7 +103,7 @@ def manual_sshpass(
     commands.append(cmd)
     manual_command = " && ".join(commands)
     if not hasattr(env, "sshpass") and not env.env_sshpass:
-        raise ValueError("Neither SSHPASS set in environment" +
+        raise FabSimError.ValueError("Neither SSHPASS set in environment" +
                          " nor sshpass value set for this remote machine")
     sshpass_args = "-e" if env.env_sshpass else "-f '%(sshpass)s'" % env
     pre_cmd = f"sshpass {sshpass_args}" + " ssh %(username)s@%(remote)s " % env
@@ -307,7 +240,7 @@ def rsync_project(
     #     local_dir, env.host_string, remote_dir
     # )
 
-    with add_print_prefix(prefix="rsync_project", color=196):
+    with add_print_prefix(prefix="rsync_project", color=36):
         print("{}".format(rync_cmd))
     # conn = HostConnection()
     # return conn.run_command(command=rync_cmd, capture=capture)
@@ -339,8 +272,8 @@ def put(
     """
     if not (os.path.isfile(src) or os.path.isdir(src)):
         # src should points to a regular file or a directory
-        raise RuntimeError(
-            "\nThe input path {} is no file neither folder !!! ".format(src)
+        raise FabSimError.RuntimeError(
+            "The input path {} is no file neither folder !!! ".format(src)
         )
         # sys.exit()
 
@@ -354,7 +287,7 @@ def put(
     if os.path.isdir(src) and os.path.isdir(dst) and dst.endswith("/"):
         src = src + "/*"
 
-    pu_cmd = ""
+    put_cmd = ""
     if env.manual_gsissh:
         # TODO : I did not test globus-url-copy, and used the initialize code
         if os.path.isdir(src):
@@ -390,7 +323,7 @@ def put(
             default_opts, rsh_opts, src, env.host_string, dst
         )
 
-    with add_print_prefix(prefix="put", color=196):
+    with add_print_prefix(prefix="put", color=36):
         print("{}".format(put_cmd))
 
     return local(command=put_cmd, capture=capture)

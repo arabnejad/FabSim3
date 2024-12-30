@@ -1,6 +1,4 @@
 default:
-  local_results: ~/FabSim3/results
-  local_configs: ~/FabSim3/config_files
   username: your-username
   manual_gsissh: false
   port: 22

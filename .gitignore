@@ -1,39 +1,82 @@
-fabsim/deploy/machines_user.yml
-
-fabsim/deploy/machines_private.yml
-
-fabsim/deploy/machines_user_backup.yml
-
-base/__pycache__/
-
-fabsim/deploy/\.jobscripts/
-
-fabsim/deploy/\.jobsDB/
-
-fabsim/deploy/__pycache__/
-
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
 
-plugins/
+# C extensions
+*.so
 
-results/
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-ssh_copy_id.log
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
 
-tmp_app/
-
-localhost_exe/
-
-fabsim/deploy/applications_user.yml
-
-*_build*/
-
-**/.DS_Store
-
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
 .hypothesis/
+.pytest_cache/
 
-.vscode/
+# Sphinx documentation
+docs/_build/
 
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
 venv/
-.venv/
-pyproject.toml
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+
+# IDEs
+.idea/
+
+
+.jobscripts/

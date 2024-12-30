@@ -2,19 +2,20 @@
 
 import random
 import string
-from os import path, rename
+from os import path, rename, getcwd
 
 import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-
+from rich import print as rich_print
 from fabsim.base.decorators import task
-from fabsim.base.env import env
-from fabsim.base.networks import local, run
+from fabsim.base.environment_manager import env
+from fabsim.base.command_runner import cmd_runner
 from fabsim.deploy.templates import template
+from fabsim.base.error_handler import FabSimError
 
-
+'''
 def warn_duplicate_plugin(plugin_dir, plugin_name, random_string_length=5):
     """Warn user about the duplicate plugin directory."""
 
@@ -23,24 +24,21 @@ def warn_duplicate_plugin(plugin_dir, plugin_name, random_string_length=5):
             string.ascii_uppercase + string.digits, k=random_string_length
         )
     )
-    rename(f"{plugin_dir}/{plugin_name}", f"{plugin_dir}/{plugin_name}_{res}")
-    print("\n")
     console = Console()
     console.print(
         Panel(
             f"[orange_red1]The {plugin_name} "
-            "plugin directory already exists.\n"
-            "To keep your previous folder, we rename it to[/orange_red1]: "
-            f"[dark_cyan]{plugin_name}_{res}[/dark_cyan]",
-            title="[dark_cyan]WARNING[/dark_cyan]",
+            "plugin directory already exists in the current directory. ",
+            title="[red1]Error[/red1]",
             expand=False,
-        )
+        ),
+        new_line_start=True,
     )
-    print("\n")
 
 
-@task
-def install_plugin(plugin_name, branch=None):
+
+
+def install_plugin(plugin_name):
     """
     Install a specific FabSim3 plugin.
 
@@ -49,111 +47,67 @@ def install_plugin(plugin_name, branch=None):
         branch (str, optional): branch name
     """
 
-    fname = path.join(env.fabsim_root, "deploy", "plugins.yml")
-    with open(fname, encoding="utf-8") as file:
-        config = yaml.load(file, Loader=yaml.SafeLoader)
-    info = config[plugin_name]
+    plugins_yaml_file = path.join(env.fabsim_root, "deploy", "plugins.yml")
+    with open(plugins_yaml_file, encoding="utf-8") as file:
+        plugins = yaml.load(file, Loader=yaml.SafeLoader)
 
-    plugin_dir = path.join(env.localroot, "plugins")
+    if plugin_name not in plugins:
+        raise FabSimError.RuntimeError(
+            f"'{plugin_name}' plugin not found in the available plugins.",
+            details="To see the list of available plugins, run 'fabsim -l plugins'",
+        )
+        return
+
 
     # check if the requested pluging is already installed or not
-    # if it is already installed, rename the current pluging directory and
-    # warn user
-    if path.exists(f"{plugin_dir}/{plugin_name}"):
+    plugin_dir = getcwd()
+    if path.exists(f"{plugin_name}"):
         warn_duplicate_plugin(plugin_dir, plugin_name)
+        return
 
-    local(f"mkdir -p {plugin_dir}")
-    local(f"rm -rf {plugin_dir}/{plugin_name}")
-
-    if branch is None:
-        local(f"git clone {info['repository']} '{plugin_dir}/{plugin_name}'")
-    else:
-        local(
-            f"git clone --branch {branch} {info['repository']} "
-            f"'{plugin_dir}/{plugin_name}'"
+    rich_print(
+        Panel.fit(
+            f"Installing [orange_red1]{plugin_name}[/orange_red1] plugin...",
+            border_style="orange_red1",
         )
+    )
 
-    print(f"{plugin_name} plugin installed...")
+    info = plugins[plugin_name]
+    local(f"git clone {info['repository']} \"{path.join(plugin_dir,plugin_name)}\"")
 
-    if path.exists(f"{plugin_dir}/{plugin_name}/requirements.txt"):
-        print("Installing plugin requirements...")
-        local(f"pip install -r {plugin_dir}/{plugin_name}/requirements.txt")
-        print("Plugin requirements installed successfully.")
-    else:
-        print(f"No requirements.txt file found for {plugin_name} plugin")
-
-    print(f"Plugin {plugin_name} installed successfully.")
-
-
-@task
+    rich_print(
+        Panel.fit(
+            f"Plugin [green]{plugin_name}[/green] installed successfully.",
+            border_style="green",
+        )
+    )
+'''
+'''
 def avail_plugin():
     """
     print list of available plugins.
     """
-
-    fname = path.join(env.fabsim_root, "deploy", "plugins.yml")
-    with open(fname, encoding="utf-8") as file:
-        config = yaml.load(file, Loader=yaml.SafeLoader)
+    plugins_yaml_file = path.join(env.fabsim_root, "deploy", "plugins.yml")
+    with open(plugins_yaml_file, encoding="utf-8") as file:
+        plugins = yaml.load(file, Loader=yaml.SafeLoader)
 
     table = Table(
-        title="\nList of available plugins",
+        title="List of available plugins",
         show_header=True,
         header_style="bold cyan",
     )
     table.add_column("plugin name")
     table.add_column("repository")
-    table.add_column("installed")
-    for plugin_name, repo in config.items():
-        if path.exists(path.join(env.localroot, "plugins", plugin_name)):
-            installed = "\u2714"  # ✔
-        else:
-            installed = "\u2718"  # ✘
+    for plugin_name, repo in plugins.items():
         table.add_row(
             f"[blue]{plugin_name}[/blue]",
-            f"{repo['repository']}",
-            f"{installed}",
+            f"{repo['repository']}"
         )
     console = Console()
-    console.print(table)
+    console.print(table,new_line_start=True)
+'''
 
 
-@task
-def update_plugin(plugin_name):
-    """
-    Update a specific FabSim3 plugin.
-
-    Args:
-        plugin_name (str): plugin name
-    """
-    plugin_dir = f"{env.localroot}/plugins"
-    local(f"cd {plugin_dir}/{plugin_name} && git pull")
-
-
-@task
-def remove_plugin(name):
-    """
-    Remove the specified plug-in.
-
-    Args:
-        name (str): plugin name
-    """
-    plugin_dir = f"{env.localroot}/plugins".format()
-    local(f"rm -rf {plugin_dir}/{name}")
-
-
-def get_setup_fabsim_dirs_string():
-    """
-    Returns the commands required to set up the fabric directories. This
-    is not in the env, because modifying this is likely to break FabSim
-    in most cases. This is stored in an individual function, so that the
-    string can be appended in existing commands, reducing the
-    performance overhead.
-    """
-    return (
-        "mkdir -p $config_path; "
-        "mkdir -p $results_path; "
-        "mkdir -p $scripts_path"
-    )
 
 
 def get_clean_fabsim_dirs_string(prefix):
@@ -172,19 +126,11 @@ def get_clean_fabsim_dirs_string(prefix):
 
 
 @task
-def setup_fabsim_dirs():
-    """
-    Sets up directories required for the use of FabSim.
-    """
-    run(template(get_setup_fabsim_dirs_string()))
-
-
-@task
 def clean_fabsim_dirs(prefix=""):
     """
     Cleans up directories used by FabSim.
     """
-    run(template(get_clean_fabsim_dirs_string(prefix)))
+    cmd_runner.run(template(get_clean_fabsim_dirs_string(prefix)))
 
 
 @task
@@ -207,11 +153,11 @@ def setup_ssh_keys(password=""):
     if path.isfile(f"{home}/.ssh/id_rsa.pub"):
         print("local id_rsa key already exists.")
     else:
-        local(
+        cmd_runner.local(
             f'ssh-keygen -q -f {home}/.ssh/id_rsa'
             f' -t rsa -b 4096 -N "{password}"'
         )
-    local(
+    cmd_runner.local(
         template(
             "ssh-copy-id -i ~/.ssh/id_rsa.pub "
             f"{env.host_string} 2>ssh_copy_id.log"
