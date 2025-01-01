@@ -1,4 +1,7 @@
-
+from os import path
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from fabsim.base.decorators import task
 from beartype.typing import Optional
 from beartype import beartype
@@ -99,3 +102,59 @@ def put_results(name: str) -> None:
         cmd_runner.rsync_project(
             local_dir=env.job_results_local + "/", remote_dir=env.job_results
             )
+
+
+
+def get_clean_fabsim_dirs_string(prefix):
+    """
+    Returns the commands required to clean the fabric directories. This
+    is not in the env, because modifying this is likely to break FabSim
+    in most cases. This is stored in an individual function, so that the
+    string can be appended in existing commands, reducing the
+    performance overhead.
+    """
+    return (
+        f"rm -rf $config_path/{prefix}*; "
+        f"rm -rf $results_path/{prefix}*; "
+        f"rm -rf $scripts_path/{prefix}*"
+    )
+
+
+@task
+def clean_fabsim_dirs(prefix=""):
+    """
+    Cleans up directories used by FabSim.
+    """
+    cmd_runner.run(template(get_clean_fabsim_dirs_string(prefix)))
+
+
+@task
+def setup_ssh_keys(password=""):
+    """
+    Sets up SSH key pairs for FabSim access.
+    """
+    console = Console()
+    console.print(
+        Panel(
+            "[magenta]To set up your SSH keys, you will be logged in to your\n"
+            "local machine once using SSH. You may be asked to provide\n"
+            "your password once to facilitate this login.[/magenta]",
+            title="[dark_cyan]Setup SSH keys[/dark_cyan]",
+            expand=False,
+        )
+    )
+
+    home = path.expanduser("~")
+    if path.isfile(f"{home}/.ssh/id_rsa.pub"):
+        print("local id_rsa key already exists.")
+    else:
+        cmd_runner.local(
+            f'ssh-keygen -q -f {home}/.ssh/id_rsa'
+            f' -t rsa -b 4096 -N "{password}"'
+        )
+    cmd_runner.local(
+        template(
+            "ssh-copy-id -i ~/.ssh/id_rsa.pub "
+            f"{env.host_string} 2>ssh_copy_id.log"
+        )
+    )

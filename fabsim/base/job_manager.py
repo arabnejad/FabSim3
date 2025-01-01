@@ -264,6 +264,7 @@ class JobManager():
         Args:
             config_dir (str): The path to the config directory
         """
+
         job_manager.set_config(config_dir)
         self._create_config_directories()
 
@@ -367,141 +368,6 @@ class JobManager():
             )
         )
 
-    def job(self, job_args : dict, prepare_only=False):
-        """
-        Internal low level job launcher.
-
-        Executes a generic job submission on the remote machine. The workflow is divided into three phases to improve job submission efficiency:
-            1. Job Preparation
-            2. Job Transmission
-            3. Job Submission
-
-        Parameters:
-            job_args (dict): Arguments for the job.
-            prepare_only (bool): If True, only prepare the job scripts.
-
-        Returns:
-            list: Generated job scripts for submission on the remote machine.
-
-        """
-        # Ensure that `set_config` has been called
-        if not hasattr(env, "job_config_path"):
-            raise FabSimError.RuntimeError(
-                "Function 'job_manager.set_config' was not called, ",
-                details="Please call it before 'job_manager.job()'"
-            )
-        # update the environment variables with the job arguments
-        env.update(job_args)
-        # Add required label, memory, and core settings to env
-        job_manager.calculate_required_nodes()
-        job_manager.calculate_total_memory()
-
-        # check if the job is an ensemble simulation
-        env.is_ensemble = "sweepdir_items" in job_args
-
-        #  Set up temporary paths for job files, scripts, and results
-        env.tmp_work_path = env.pather.join(
-            tempfile._get_default_tempdir(),
-            next(tempfile._get_candidate_names()),
-            "FabSim3",
-        )
-        # Remove the temporary work path if it already exists
-        if os.path.exists(env.tmp_work_path):
-            rmtree(env.tmp_work_path)
-
-        # Note: the config_files folder is already transfered by job_manager.transfer_config_files(...)
-        env.tmp_results_path = env.pather.join(env.tmp_work_path, "results")
-        env.tmp_scripts_path = env.pather.join(env.tmp_work_path, "scripts")
-        os.makedirs(env.tmp_scripts_path)
-        os.makedirs(env.tmp_results_path)
-
-        # Initialize multiprocessing pool
-        POOL = MultiProcessingPool(PoolSize=int(env.nb_process))
-
-        #####################################
-        #       Job Preparation Phase       #
-        #####################################
-        self._display_job_message(
-            title="Job Preparation Phase",
-            message=f"Temporary Work Path: {env.tmp_work_path}\n\n{yaml.dump(job_args, default_flow_style=False).rstrip()}",
-        )
-
-        env.replica_start_number = (
-            [int(x) for x in job_args.get("replica_start_number", [1])]
-            if isinstance(job_args.get("replica_start_number"), list)
-            else int(job_args.get("replica_start_number", 1))
-        )
-
-        if env.is_ensemble:
-            for idx, task_label in enumerate(env.sweepdir_items):
-                replica_start_number = (
-                    env.replica_start_number[idx]
-                    if isinstance(env.replica_start_number, list)
-                    else env.replica_start_number
-                )
-
-                POOL.add_task(
-                    func=self._prepare_job_scripts,
-                    func_args=dict(
-                        is_ensemble=env.is_ensemble,
-                        label=task_label,
-                        replica_start_number=replica_start_number,
-                    ),
-                )
-        else:
-            job_args["replica_start_number"] = env.replica_start_number
-            POOL.add_task(func=self._prepare_job_scripts, func_args=job_args)
-
-        job_scripts  = POOL.wait_for_tasks()
-
-        if prepare_only:
-            return job_scripts
-
-        #####################################
-        #       Job Transmission Phase      #
-        #####################################
-        self._display_job_message(
-            title="Job Transmission Phase",
-            message=f"Copying files from: {env.tmp_work_path}\nTo: {env.work_path}",
-        )
-
-        self._transfer_job_files()
-
-        if not getattr(env, "TestOnly", "").lower() == "true":
-            # DO NOT submit any job
-            # env.submit_job is False in case of using PilotJob option
-            # therefore, DO NOT submit the job directly, only submit PJ script
-            if not (
-                hasattr(env, "submit_job")
-                and isinstance(env.submit_job, bool)
-                and not env.submit_job
-            ):
-                #####################################
-                #        Job Submission Phase       #
-                #####################################
-                self._display_job_message(
-                    title="Job Submission Phase",
-                    message="Submitting all job scripts to the target remote machine.",
-                )
-
-                for job_script in job_scripts:
-                    self._submit_job(dict(job_script=job_script))
-
-
-        #####################################
-        #      Fetching Results Phase       #
-        #####################################
-        self._display_job_message(
-            title="Fetching Results",
-            message=f"All jobs are submitted to {env.machine_name}.\n\n"
-            f"Use:\n\n"
-            f"   fabsim {env.machine_name} fetch_results\n\n"
-            "to copy results back to localhost after the jobs are complete.",
-        )
-
-        # POOL.shutdown_threads()
-        return job_scripts
-
     def _prepare_job_scripts(self, job_args: dict):
         """
         Create job folders and scripts in a temporary folder `<tmp_folder>/{results,scripts}`.
@@ -564,9 +430,8 @@ class JobManager():
             # Handle job script naming based on the type of run.
             # For ensemble runs or simple jobs, append `env.label` to the generated
             # job script name. However, for `PJ_PYheader` and `PJ_header` scripts,
-            # no additional label should be added to the script name, so an empty
-            # string is used as the label in those cases.
-            if getattr(env, "NoEnvScript", False):
+            # no additional exec template script should be added to the job script
+            if getattr(env, "only_batch_header", False):
                 tmp_job_script = script_templates(env.batch_header)
             else:
                 tmp_job_script = script_templates(env.batch_header, env.script)
@@ -716,20 +581,6 @@ class JobManager():
             print("job dispatch is done locally\n")
             return [job_script]
 
-        # Skip execution if noexec is set
-        if env.get("noexec", False):
-            return [job_script]
-
-        # Handle dry run
-        if env.get("dry_run", False):
-            if env.get("host") == "localhost":
-                print("Dry run")
-                subprocess.call(["cat", job_script])
-            else:
-                print("Dry run available only on localhost")
-                exit()
-            return [job_script]
-
         # Determine the command and dispatch method
         job_dir = env.pather.dirname(job_script)
 
@@ -840,6 +691,132 @@ class JobManager():
         dirs = os.listdir(dir_path)
         return len([d for d in dirs if d.startswith(prefix)])
 
+    def job(self, job_args : dict, submit_job=True):
+        """
+        Internal low level job launcher.
+
+        Executes a generic job submission on the remote machine. The workflow is divided into three phases to improve job submission efficiency:
+            1. Job Preparation
+            2. Job Transmission
+            3. Job Submission
+
+        Parameters:
+            job_args (dict): Arguments for the job.
+            submit_job (bool): If True, only prepare and transfer the job scripts.
+
+        Returns:
+            list: Generated job scripts for submission on the remote machine.
+
+        """
+        # Ensure that `set_config` has been called
+        if not hasattr(env, "job_config_path"):
+            raise FabSimError.RuntimeError(
+                "Function 'job_manager.set_config' was not called, ",
+                details="Please call it before 'job_manager.job()'"
+            )
+        # update the environment variables with the job arguments
+        env.update(job_args)
+        # Add required label, memory, and core settings to env
+        job_manager.calculate_required_nodes()
+        job_manager.calculate_total_memory()
+
+        # check if the job is an ensemble simulation
+        env.is_ensemble = "sweepdir_items" in job_args
+
+        #  Set up temporary paths for job files, scripts, and results
+        env.tmp_work_path = env.pather.join(
+            tempfile._get_default_tempdir(),
+            next(tempfile._get_candidate_names()),
+            "FabSim3",
+        )
+        # Remove the temporary work path if it already exists
+        if os.path.exists(env.tmp_work_path):
+            rmtree(env.tmp_work_path)
+
+        # Note: the config_files folder is already transfered by job_manager.transfer_config_files(...)
+        env.tmp_results_path = env.pather.join(env.tmp_work_path, "results")
+        env.tmp_scripts_path = env.pather.join(env.tmp_work_path, "scripts")
+        os.makedirs(env.tmp_scripts_path)
+        os.makedirs(env.tmp_results_path)
+
+        # Initialize multiprocessing pool
+        POOL = MultiProcessingPool(PoolSize=int(env.nb_process))
+
+        #####################################
+        #       Job Preparation Phase       #
+        #####################################
+        self._display_job_message(
+            title="Job Preparation Phase",
+            message=f"Temporary Work Path: {env.tmp_work_path}\n\n{yaml.dump(job_args, default_flow_style=False).rstrip()}",
+        )
+
+        env.replica_start_number = (
+            [int(x) for x in job_args.get("replica_start_number", [1])]
+            if isinstance(job_args.get("replica_start_number"), list)
+            else int(job_args.get("replica_start_number", 1))
+        )
+
+        if env.is_ensemble:
+            for idx, task_label in enumerate(env.sweepdir_items):
+                replica_start_number = (
+                    env.replica_start_number[idx]
+                    if isinstance(env.replica_start_number, list)
+                    else env.replica_start_number
+                )
+
+                POOL.add_task(
+                    func=self._prepare_job_scripts,
+                    func_args=dict(
+                        is_ensemble=env.is_ensemble,
+                        label=task_label,
+                        replica_start_number=replica_start_number,
+                    ),
+                )
+        else:
+            job_args["replica_start_number"] = env.replica_start_number
+            POOL.add_task(func=self._prepare_job_scripts, func_args=job_args)
+
+        job_scripts  = POOL.wait_for_tasks()
+
+        #####################################
+        #       Job Transmission Phase      #
+        #####################################
+        self._display_job_message(
+            title="Job Transmission Phase",
+            message=f"Copying files from: {env.tmp_work_path}\nTo: {env.work_path}",
+        )
+
+        self._transfer_job_files()
+
+        # If jobs are submitted using PilotJob option, return the job scripts and skip submission phase
+        if submit_job == False:
+            return job_scripts
+
+        #####################################
+        #        Job Submission Phase       #
+        #####################################
+        self._display_job_message(
+            title="Job Submission Phase",
+            message="Submitting all job scripts to the target remote machine.",
+        )
+
+        for job_script in job_scripts:
+            self._submit_job(dict(job_script=job_script))
+
+
+        #####################################
+        #      Fetching Results Phase       #
+        #####################################
+        self._display_job_message(
+            title="Fetching Results",
+            message=f"All jobs are submitted to {env.machine_name}.\n\n"
+            f"Use:\n\n"
+            f"   fabsim {env.machine_name} fetch_results\n\n"
+            "to copy results back to localhost after the jobs are complete.",
+        )
+
+        # POOL.shutdown_threads()
+        return job_scripts
 
     @beartype
     def run_ensemble(self,
@@ -890,18 +867,27 @@ class JobManager():
                 "ERROR: run_ensemble function has been called,"
                 "but the parameter 'script' was not specified."
             )
-        # Ensure 'with_config' was called
+        # Ensure that `set_config` has been called
         if not hasattr(env, "job_config_path"):
             raise FabSimError.RuntimeError(
-                "Function with_config did NOT called, "
-                "Please call it before calling run_ensemble()"
+                "Function 'job_manager.set_config' was not called, ",
+                details="Please call it before 'job_manager.run_ensemble(...)'"
             )
-
         # Handle PilotJob option
+        submit_job = True
         if getattr(env, "PJ", "").lower() == "true":
+            # save all submitted jobs in a list, so it can be used in the PJ script
             env.submitted_jobs_list = []
-            env.submit_job = False
+            # do not submit jobs, only prepare and transfer the job scripts
+            submit_job = False
+            # Update the script header for PJ jobs, and use simple script, since it is handled in the PJ script
             env.batch_header = "bash_header"
+            # check pilot job type
+            if not hasattr(env, "PJ_TYPE"):
+                raise FabSimError.RuntimeError(
+                    "ERROR: 'PJ_TYPE' did not set. It should be set to 'RP' or 'QCG'. Exiting...")
+            elif env.PJ_TYPE.lower() not in ["rp", "qcg"]:
+                    raise FabSimError.RuntimeError(f"Error: 'PJ_TYPE' must be set to 'RP' or 'QCG'. Exiting...")
 
         if not sweep_on_remote:
             sweepdir_items = os.listdir(sweep_dir)
@@ -934,35 +920,97 @@ class JobManager():
                 0, sweepdir_items.pop(sweepdir_items.index(env.exec_first))
             )
 
+        # TODO: only use transfer_config_files in plugins and not set_config, set_config is already called in transfer_config_files
         if transfer_config_files:
             job_manager.transfer_config_files(config)
 
-        # Determine job type and run accordingly
+        job_scripts = self.job(
+            dict(
+                ensemble_mode=True,
+                sweepdir_items=sweepdir_items,
+                sweep_dir=sweep_dir,
+                replica_start_number=replica_start_number,
+            ),
+            submit_job=submit_job,
+        )
 
+        # Determine PJ job type and run accordingly
         if hasattr(env, "PJ_TYPE"):
-            pj_type = env.PJ_TYPE.lower()
-            if pj_type == "rp":
-                # self.run_radical(job_scripts_to_submit, env.get("venv", False))
-                raise FabSimError.NotImplementedError("RADICAL-Pilot Jobs Not Implemented Yet")
-            elif pj_type == "qcg":
-                # self.run_qcg(job_scripts_to_submit, env.get("venv", False))
-                raise FabSimError.NotImplementedError("QCG Pilot Jobs Not Implemented Yet")
-            else:
-                raise FabSimError.RuntimeError(f"Error: 'PJ_TYPE' must be set to 'RP' or 'QCG'. Exiting...")
-        else:
-            # Submit jobs normally if PJ_TYPE is not set
-            job_scripts_to_submit = self.job(
-                dict(
-                    is_ensemble=True,
-                    sweepdir_items=sweepdir_items,
-                    sweep_dir=sweep_dir,
-                    replica_start_number=replica_start_number,
-                ),
-                prepare_only=False,
-            )
-'''
+            if env.PJ_TYPE.lower() == "rp":
+                # self.run_radical(job_scripts)
+                raise NotImplementedError.NotImplementedError(
+                    "RADICAL-Pilot is not yet implemented for users."
+                )
+            elif env.PJ_TYPE.lower() == "qcg":
+                self._run_qcg(job_scripts)
+
     @beartype
-    def run_radical(self, job_scripts: list, venv="False"):
+    def _run_qcg(self, job_scripts: list):
+        """
+        Submits QCG Pilot Jobs based on provided job scripts.
+
+        Args:
+            job_scripts (list): List of job script paths to be submitted.
+        """
+
+        self._display_job_message(
+            title="PJ job submission phase",
+            message="Submitting QCG Pilot Jobs",
+        )
+
+        # Set task model to default if not already set
+        env.setdefault("task_model", "default")
+
+        # Collect job scripts for submission
+        submitted_jobs = []
+        for index, job_script in enumerate(job_scripts, start=1):
+            env.idsID = index
+            env.idsPath = job_script
+            env.dirPath = os.path.dirname(env.idsPath)
+            submitted_jobs.append(script_template_content("qcg-PJ-task-template"))
+
+        env.submitted_jobs_list = "\n".join(submitted_jobs)
+
+        # Prevent applying replicas functionality on Pilot Job folders
+        env.replicas = "1"
+        backup_batch_header = env.batch_header
+        env.batch_header = env.PJ_PYheader
+
+        # Generate PilotJob PY script
+        job_scripts_to_submit = self.job(
+            dict(
+                is_ensemble=False, label="PJ_PYheader", only_batch_header=True
+            ),
+            submit_job=False,
+        )
+
+        env.PJ_PATH = job_scripts_to_submit[0]
+        env.PJ_FileName = env.pather.basename(env.PJ_PATH)
+        env.batch_header = env.PJ_header
+
+        # Construct the run_QCG_PilotJob command
+        qcg_pj_command_lines = []
+        if hasattr(env, "venv") and str(env.venv).lower() == "true":
+            # QCG-PJ should load from virtualenv
+            qcg_pj_command_lines.extend([
+                "# Activate the virtual environment",
+                f"source {env.virtual_env_path}/bin/activate"
+            ])
+
+        qcg_pj_command_lines.extend([
+            "echo 'Checking if the qcg-pilotjob package is installed...'",
+            "python3 -c 'import qcg.pilotjob' 2>/dev/null || pip3 install --upgrade qcg-pilotjob",
+            "echo 'Executing the qcg-pilotjob package using Python...'",
+            f"python3 {env.PJ_PATH}",
+        ])
+        env.run_QCG_PilotJob = "\n".join(qcg_pj_command_lines)
+        self.job(dict(is_ensemble=False, label="PJ_header", only_batch_header=True))
+        env.batch_header = backup_batch_header
+        env.only_batch_header = False
+
+    '''
+    @beartype
+    def run_radical(self, job_scripts: list):
 
         self._display_job_message(
             title="PJ job submission phase",
@@ -1053,67 +1101,11 @@ class JobManager():
         env.replicas = "1"
         backup_header = env.batch_header
         env.batch_header = env.radical_PJ_header
-        env.submit_job = True
+        # env.submit_job = True
 
-        self.job(dict(is_ensemble=False, label="radical-PJ-header", NoEnvScript=True))
+        self.job(dict(is_ensemble=False, label="radical-PJ-header", only_batch_header=True))
         env.batch_header = backup_header
-        env.NoEnvScript = False
-
-
-    @beartype
-    def run_qcg(self, job_scripts: list, venv: bool):
-        self._display_job_message(
-            title="PJ job submission phase",
-            message="Submitting QCG Pilot Jobs",
-        )
-
-        # Set task model to default if not already set
-        env.setdefault("task_model", "default")
-
-        # Collect job scripts to submit
-        submitted_jobs = []
-        for index, job_script in enumerate(job_scripts, start=1):
-            env.idsID = index
-            env.idsPath = job_script
-            env.dirPath = os.path.dirname(env.idsPath)
-            submitted_jobs.append(script_template_content("qcg-PJ-task-template"))
-
-        env.submitted_jobs_list = "\n".join(submitted_jobs)
-
-        # Avoid apply replicas functionality on PilotJob folders
-        env.replicas = "1"
-        backup_header = env.batch_header
-        env.batch_header = env.PJ_PYheader
-        job_scripts_to_submit = self.job(
-            dict(
-                is_ensemble=False, label="PJ_PYheader", NoEnvScript=True
-            )
-        )
-
-        env.PJ_PATH = job_scripts_to_submit[0]
-        env.PJ_FileName = env.pather.basename(env.PJ_PATH)
-        env.batch_header = env.PJ_header
-        env.submit_job = True
-
-        # Construct the run_QCG_PilotJob command
-        PJ_CMD = []
-        if hasattr(env, "venv") and str(env.venv).lower() == "true":
-            # QCG-PJ should load from virtualenv
-            PJ_CMD.append("# Activate the virtual environment")
-            PJ_CMD.append(f"source {env.virtual_env_path}/bin/activate\n")
-
-        PJ_CMD.append("# Check if qcg-pilotjob is installed")
-        PJ_CMD.append(
-            "python3 -c 'import qcg-pilotjob' 2>/dev/null || "
-            "pip3 install --upgrade qcg-pilotjob\n"
-        )
-        PJ_CMD.append("# Python command for qcg-pilotjob execution")
-        PJ_CMD.append(f"python3 {env.PJ_PATH}")
-
-        env.run_QCG_PilotJob = "\n".join(PJ_CMD)
-        job(dict(is_ensemble=False, label="PJ_header", NoEnvScript=True))
-        env.batch_header = backup_header
-        env.NoEnvScript = False
-'''
+        env.only_batch_header = False
+    '''
 
 job_manager = JobManager()
