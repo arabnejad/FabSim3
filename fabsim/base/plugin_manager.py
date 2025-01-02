@@ -6,7 +6,7 @@ from fabsim.base.environment_manager import env
 from fabsim.base.error_handler import FabSimError
 import yaml
 import inspect
-from fabsim.base.decorators import add_print_prefix
+from fabsim.base.logger import add_print_prefix
 from rich.table import Table
 from rich.console import Console
 from rich.panel import Panel

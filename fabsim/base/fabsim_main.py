@@ -1,27 +1,15 @@
 from __future__ import absolute_import
 
-import builtins
-import inspect
 import sys
-from optparse import OptionParser, make_option
 from pprint import pformat, pprint
-
+import os
 from rich import get_console
 from rich import print as rich_print
 from rich.panel import Panel
 
 from fabsim.base.environment_manager import env
-from fabsim.base.fab import *
 
 from fabsim.base.fabsim_tasks import *
-# from fabsim.deploy.machines import (
-#     # available_remote_machines,
-#     remote_machines,
-#     # machine_config_info,
-#     # load_machine,
-#     # load_plugins,
-# )
-import glob
 
 from fabsim.base.error_handler import FabSimError
 from fabsim.base.config_fabsim import FABSIM_CONFIG_DIR
@@ -32,65 +20,9 @@ from fabsim.base.remote_machine_manager import remote_machine_manager
 from fabsim.base.command_line_parser import CommandLineParser
 from fabsim.base.utils import (
     OpenVPNContext,
-    # find_all_avail_tasks,
     show_avail_tasks,
+    install_packages,
 )
-# def getPluginRootDir(path : str) -> bool:
-#     """check if the fabsim is called from a valid plugin directory
-
-#     Args:
-#         path (str): the path of the directory from which the script is called
-
-#     Returns:
-#         bool: true if the script is called from a valid plugin directory
-#     """
-#     pattern = "Fab*.py"
-#     # Stop before falling off root of filesystem (should be platform agnostic)
-#     while os.path.split(os.path.abspath(path))[1]:
-#         # look for a py file named started with fab_ in the directory
-#         if glob.glob(os.path.join(path, pattern)):
-#             fab_files = [os.path.basename(f) for f in glob.glob(os.path.join(path, pattern))]
-#             if len(fab_files) > 1:
-#                 raise FabSimError.ValueError(
-#                     f"Multiple Fab* files {fab_files} found in the plugin directory.",
-#                     details="Please make sure there is only one Fab* file in the plugin directory."
-#                 )
-#             return path, os.path.splitext(fab_files[0])[0]
-#         path = os.path.split(path)[0]
-#     return None, None
-
-
-
-# def load_plugin():
-#     """
-#     Load the current plugin which fabsim command is called from
-#     """
-#     # here, if we use the globals(), new changes will no be permanent for other
-#     # files, so, we need to write them into global namespace seen by this frame
-#     caller_globals = inspect.stack()[1][0].f_globals
-
-#     try:
-#         with add_print_prefix(prefix="loading plugin", color=28):
-#             print("{} ...".format(env.plugin_name))
-
-#         plugin = importlib.import_module("{}".format(env.plugin_name))
-#         plugin_dict = plugin.__dict__
-
-#         try:
-#             to_import = plugin.__all__
-#         except AttributeError:
-#             to_import = [
-#                 name for name in plugin_dict if not name.startswith("_")
-#             ]
-
-#         caller_globals.update(
-#             {name: plugin_dict[name] for name in to_import}
-#         )
-#         env.localplugins.update({env.plugin_name: env.plugin_dir})
-
-#     except ImportError as e:
-#         print(e)
-#         raise FabSimError.ImportError(e.message if hasattr(e, "message") else e)
 
 
 def main():
@@ -170,7 +102,15 @@ def main():
         plugin_manager.showAvailPlugins()
         sys.exit()
     elif cli.requestShowRemoteMachineConfig():
+         # Set the remote machine name in the environment
+        env.host = cli.getRequestRemoteMachineName()
         remote_machine_manager.printMachineConfigInfo()
+        sys.exit()
+    elif cli.requestInstallPackages():
+        # Set the remote machine name in the environment
+        remote_machine_manager.loadMachine(cli.getRequestRemoteMachineName())
+        install_packages(cli.getRequestedInstallPackages(), venv=cli.requestUseVenv())
+        print("Installation completed successfully.")
         sys.exit()
     elif cli.requestInstallPlugin():
         if env.plugin_name != None:

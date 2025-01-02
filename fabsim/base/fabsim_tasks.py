@@ -5,10 +5,14 @@ from rich.table import Table
 from fabsim.base.decorators import task
 from beartype.typing import Optional
 from beartype import beartype
+from pathlib import Path
+import yaml
 from fabsim.base.environment_manager import env
 from fabsim.base.command_runner import cmd_runner
-import os
+from shutil import copy, copyfile, rmtree
+
 from fabsim.deploy.templates import (
+    script_templates,
     template,
 )
 from fabsim.base.job_manager import job_manager
@@ -154,7 +158,6 @@ def setup_ssh_keys(password=""):
         )
     cmd_runner.local(
         template(
-            "ssh-copy-id -i ~/.ssh/id_rsa.pub "
-            f"{env.host_string} 2>ssh_copy_id.log"
+            f"ssh-copy-id -i ~/.ssh/id_rsa.pub {env.host_string}"
         )
     )

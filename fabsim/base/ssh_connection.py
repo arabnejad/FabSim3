@@ -1,7 +1,7 @@
 from fabsim.base.environment_manager import env
 from contextlib import contextmanager
 from fabric2 import Config, Connection
-from fabsim.base.utils import add_print_prefix
+from fabsim.base.logger import add_print_prefix
 
 class HostConnection:
     def __init__(self):
@@ -65,5 +65,5 @@ class HostConnection:
 
                 else:
                     with conn.cd(cd):
-                        result = run(command, pty=self.pty, hide=hide)
+                        result = run(command, pty=self.pty, hide=None)
         return result.stdout

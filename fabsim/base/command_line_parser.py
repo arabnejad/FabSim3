@@ -9,7 +9,7 @@ class CommandLineParser:
     """
 
     def __init__(self):
-        self.parser = argparse.ArgumentParser()
+        self.parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
         self._setup_arguments()
         self.args = None
 
@@ -42,6 +42,35 @@ class CommandLineParser:
                     "action": "store",
                     "type": str,
                     "help": "Show the configuration variables for the requested remote machine name",
+                    "metavar": ""
+                }
+            },
+            {
+                "name": ["--install_packages"],
+                "kwargs": {
+                    "action": "store",
+                    "nargs": '+',  # Accept one or more package names
+                    "type": str,
+                    "help": """Specify the packages to install.
+- You can list multiple package names separated by spaces.
+  Example:
+    fabsim --install_packages p1 p2 p3 --remote <remote_machine_name>
+
+- You can also setup virtual environment by passing the --venv flag.
+  Example:
+    fabsim --install_packages p1 p2 p3 --remote <remote_machine_name> --venv true
+""",
+                    "metavar": ""
+                }
+            },
+            {
+                "name": ["--venv"],
+                "kwargs": {
+                    "action": "store",
+                    "choices": ["true", "false"],
+                    "type" : str,
+                    "default": 'false',
+                    "help": "Set up virtual environment (true or false, default: false)",
                     "metavar": ""
                 }
             },
@@ -88,9 +117,7 @@ class CommandLineParser:
         """
         check if the user requested to show the remote machine configuration
         """
-        if self.args.remote:
-            # Set the remote machine name in the environment to be used by the remote machine manager to show the configuration
-            env.host = self.args.remote
+        if self.args.remote and not self.args.install_packages:
             return True
         return False
 
@@ -102,11 +129,38 @@ class CommandLineParser:
             return True
         return False
 
+    def getRequestRemoteMachineName(self) -> bool:
+        """
+        check if the user requested to show the remote machine configuration
+        """
+        return self.args.remote
+
     def getRequestedPluingName(self) -> str:
         """
         Get the requested plugin name to be Installed
         """
         return self.args.install
+
+    def requestInstallPackages(self) -> bool:
+        """
+        check if the user requested to install packages on remote machine
+        """
+        if self.args.install_packages and self.args.remote:
+            return True
+        return False
+
+    def getRequestedInstallPackages(self) -> list:
+        """
+        check if the user requested to install packages on remote machine
+        """
+        # return self.args.install_packages
+        return list(map(str, self.args.install_packages))
+
+    def requestUseVenv(self) -> bool:
+        """
+        check if the user requested to install packages on remote machine
+        """
+        return self.args.venv.lower() == "true"
 
     def getSubCommands(self) -> list:
         """

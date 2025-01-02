@@ -30,6 +30,8 @@ class RemoteMachineManager():
         env.update(self.user_config["default"])
         # env.complete_environment()
 
+        self._available_remote_machines()
+
 
     def _loadYamlConfigFile(self, dir : str, file_name : str, checkFileExists : bool = True) -> dict:
         """
@@ -69,9 +71,9 @@ class RemoteMachineManager():
         env.update(self.plugin_config.get("default", {}))
         env.update(self.plugin_config.get(machine_name, {}))
 
-        # save available remote machines in the environment
-        env.avail_machines = self._available_remote_machines()
-
+        # save available user's remote machines in the environment
+        machine_config_sources=[((self.plugin_config, f"machines_{env.plugin_name}_user.yml"))]
+        env.avail_machines.update(self._get_avail_machines(machine_config_sources))
 
         # env.complete_environment()
 
@@ -103,7 +105,7 @@ class RemoteMachineManager():
         env.complete_environment()
 
     @beartype
-    def _available_remote_machines(self) -> Dict:
+    def _available_remote_machines(self) -> None:
         """
         This function will return the defined remote machine available in the
         machines.yml file
@@ -116,6 +118,12 @@ class RemoteMachineManager():
         if self.plugin_config != None:
             machine_config_sources.append((self.plugin_config, f"machines_{env.plugin_name}_user.yml"))
 
+        # save available remote machines in the environment
+        env.avail_machines = self._get_avail_machines(machine_config_sources)
+
+
+    def _get_avail_machines(self, machine_config_sources) -> dict:
+        avail_machines = {}
         for machine_config, source_yaml in machine_config_sources:
             for machine_name in machine_config.keys():
                 remote_address = None

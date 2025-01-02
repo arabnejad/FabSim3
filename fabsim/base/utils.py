@@ -4,7 +4,6 @@ import platform
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
 from os import system
 from pathlib import Path
 from pprint import pprint
@@ -19,6 +18,14 @@ from rich.text import Text
 from fabsim.base.error_handler import FabSimError
 from beartype import beartype
 from beartype.typing import Optional
+from fabsim.deploy.templates import (
+    script_templates,
+    template,
+)
+import tempfile
+import os
+from fabsim.base.job_manager import job_manager
+from fabsim.base.command_runner import cmd_runner
 
 from fabsim.base.environment_manager import env
 
@@ -62,92 +69,7 @@ def show_avail_tasks() -> None:
     console.print(table)
 
 
-class Prefixer(object):
-    def __init__(self, prefix, orig):
-        self.prefix = prefix
-        self.orig = orig
 
-    def write(self, text):
-        for t in text.rstrip().splitlines():
-            self.orig.write(self.prefix + t + "\n")
-
-    def __getattr__(self, attr):
-        return getattr(self.orig, attr)
-
-
-def colored(color_code, text):
-    return "\033[38;5;{}m{}\033[0;0m ".format(color_code, text)
-
-
-@contextmanager
-def add_print_prefix(prefix, color=24):
-    # source : https://stackabuse.com/how-to-print-colored-text-in-python
-    # https://www.ditig.com/publications/256-colors-cheat-sheet
-    current_out = sys.stdout
-    try:
-        sys.stdout = Prefixer(
-            prefix=colored(color, "[{}]".format(prefix)), orig=current_out
-        )
-        yield
-    finally:
-        sys.stdout = current_out
-
-'''
-@beartype
-def find_config_file_path(
-    name: str,
-    ExceptWhenNotFound: Optional[bool] = True
-) -> str:
-    """
-    Find the config file path
-
-    Args:
-        name (str): Description
-        ExceptWhenNotFound (bool, optional): Description
-
-    Returns:
-        Union[bool, str]: - `False`: if the input config name not found
-        - the path of input config name
-    """
-    # Prevent of executing localhost runs on the FabSim3 root directory
-    if env.host == "localhost" and env.work_path == env.fabsim_root:
-        msg = (
-            "The localhost run dir is same as your FabSim3 folder\n"
-            "To avoid any conflict of config folder, please consider\n"
-            "changing your home_path_template variable\n"
-            "you can easily modify it by updating localhost entry in\n"
-            "your FabSim3/fabsim/deploy/machines_user.yml file\n\n"
-            "Here is the suggested changes:\n\n"
-        )
-
-        rich_print(
-            Panel(
-                "{}[green3]{}[/green3]".format(msg),
-                title="[red1]Error[/red1]",
-                border_style="red1",
-                expand=False,
-            )
-        )
-        exit()
-
-    path_used = None
-    for p in env.local_config_file_path:
-        config_file_path = os.path.join(p, name)
-        if os.path.exists(config_file_path):
-            path_used = config_file_path
-
-    if path_used is None:
-        if ExceptWhenNotFound:
-            raise FabSimError.FileNotFoundError(
-                "Error: config file directory '{}' " "not found in: ".format(
-                    name
-                ),
-                env.local_config_file_path,
-            )
-        else:
-            return False
-    return path_used
-'''
 
 @beartype
 def execute(task: Callable, *args, **kwargs) -> None:
@@ -177,6 +99,91 @@ def execute(task: Callable, *args, **kwargs) -> None:
                 expand=False,
             )
         )
+@beartype
+def install_packages(packages : list, venv: bool = False):
+    """
+    Install list of packages defined in deploy/applications.yml
+
+    Args:
+        venv (bool, optional): True means the VirtualEnv is already installed
+            in the remote machine
+    """
+    tmp_app_dir = env.pather.join(
+            tempfile._get_default_tempdir(),
+            next(tempfile._get_candidate_names()),
+            "tmp_app",
+        )
+    cmd_runner.local("mkdir -p {}".format(tmp_app_dir))
+    # Download packages
+    for package in packages:
+        cmd_runner.local(f"pip3 download --no-binary=:all: -d {tmp_app_dir} {package}")
+    # Sort downloaded packages by modification time
+    dependencies = sorted(Path(tmp_app_dir).iterdir(), key=lambda f: f.stat().st_mtime)
+    dependencies = [os.path.basename(dep) for dep in dependencies]
+    # Create  directory in the remote machine to store dependency packages
+    app_repository = template("/tmp/App_repo")
+    cmd_runner.run(f"mkdir -p {app_repository}")
+    # Transfer dependencies to remote machine
+    for dep in os.listdir(tmp_app_dir):
+        cmd_runner.local(
+            template(
+                f"rsync -pthrvz -e 'ssh -p $port' {tmp_app_dir}/{dep} $username@$remote:{app_repository}"
+            )
+        )
+    #
+    script_path = os.path.join(tmp_app_dir, "script")
+    # Write the Install command in a file
+    with open(script_path , "w") as script_file:
+        install_dir = "--user"
+        if venv:
+            script_file.write(
+                f"""
+                if [ ! -d {env.virtual_env_path} ]; then
+                    python -m venv {env.virtual_env_path} || echo 'WARNING: virtualenv is not installed or has issues'
+                fi
+                source {env.virtual_env_path}/bin/activate
+                """
+            )
+            install_dir_flag = ""
+
+        # First install the additional_dependencies
+        for dep in reversed(dependencies):
+            print(dep)
+            if dep.endswith(".zip"):
+                pkg_dir = dep.replace(".zip", "")
+                script_file.write(
+                    f"unzip {app_repository}/{dep} -d {app_repository} && "
+                    f"pip install {app_repository}/{pkg_dir}\n"
+                )
+
+            elif dep.endswith(".tar.gz"):
+                pkg_dir = dep.replace(".tar.gz", "")
+                script_file.write(
+                    f"tar xf {app_repository}/{dep} -C {app_repository} && "
+                    f"pip install {app_repository}/{pkg_dir}\n"
+                )
+
+    # Add temporary directory to local templates path
+    env.local_templates_path.insert(0, tmp_app_dir)
+
+    # Set environment variables
+    env.update(dict(script="script", config="install_packages", job_name="install_packages"))
+
+    # Generate job and ensure required directories exist
+    env.job_results, env.job_results_local = job_manager.generate_job_with_template()
+    directories = ["$config_path", "$results_path", "$scripts_path"]
+    command = " && ".join(f"mkdir -p {directory}" for directory in directories)
+    cmd_runner.run(template(command))
+
+    # Create job script and transfer to remote machine
+    env.job_script = script_templates(env.batch_header_install_app, env.script)
+    env.dest_name = env.pather.join(env.scripts_path, env.pather.basename(env.job_script))
+    cmd_runner.put(env.job_script, env.dest_name)
+    # Execute/Submit the job script
+    cmd_runner.run(template("mkdir -p $job_results"))
+    cmd_runner.run(template(f"{env.job_dispatch} {env.dest_name}"), cd=env.pather.dirname(env.job_results))
+    # Cleanup
+    cmd_runner.local("rm -rf {}".format(tmp_app_dir))
 
 
 class OpenVPNContext(object):

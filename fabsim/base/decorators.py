@@ -7,7 +7,7 @@ from pprint import pprint
 from beartype import beartype
 
 from fabsim.base.environment_manager import env
-from fabsim.base.utils import add_print_prefix, colored
+from fabsim.base.logger import add_print_prefix, colored
 
 """
 def colored(r, g, b, text):

@@ -4,7 +4,7 @@ import subprocess
 import os
 
 from fabsim.base.environment_manager import env
-from fabsim.base.utils import add_print_prefix
+from fabsim.base.logger import add_print_prefix
 from fabsim.deploy.templates import template
 from fabsim.base.error_handler import FabSimError
 from fabsim.base.ssh_connection import HostConnection
@@ -123,7 +123,7 @@ class CommandRunner:
         # Execute the command
         self.local(f"{ssh_prefix} '{full_command}'")
 
-    def _remote_run(cmd: str, cd: str = None):
+    def _remote_run(self, cmd: str, cd: str = None):
         """
         Execute a command on the remote machine.
         """
