@@ -1,9 +1,0 @@
-rich
-fabric2
-pyyaml
-pytest
-pycodestyle
-ruamel.yaml
-numpy
-beartype>=0.11
-invoke>=2.2
