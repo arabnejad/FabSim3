@@ -22,6 +22,7 @@ from fabsim.base.utils import (
     OpenVPNContext,
     show_avail_tasks,
     install_packages,
+    setup_ssh_keys,
 )
 
 
@@ -68,27 +69,6 @@ def main():
     plugin_manager.loadPlugin(os.getcwd())
     remote_machine_manager.loadPluginMachinesConfig()
 
-
-    '''
-    plugin_manager.setPluginRootDir(os.getcwd())
-
-    if env.plugin_dir != None:
-        # add current plugin directory to the PYTHONPATH
-        sys.path.insert(0, env.plugin_dir)
-        # load plugin specific configurations for machines
-        remote_machines.load_plugin_machines_config(env.plugin_name)
-        # load the plugin
-        load_plugin()
-    '''
-
-
-    #####################################
-    # find all available tasks/machines #
-    #####################################
-    # env.avail_tasks = find_all_avail_tasks()
-    # print(env.avail_tasks)
-    # env.avail_machines = remote_machine_manager.available_remote_machines()
-
     #####################################
     # checking input optional arguments #
     #####################################
@@ -110,7 +90,11 @@ def main():
         # Set the remote machine name in the environment
         remote_machine_manager.loadMachine(cli.getRequestRemoteMachineName())
         install_packages(cli.getRequestedInstallPackages(), venv=cli.requestUseVenv())
-        print("Installation completed successfully.")
+        sys.exit()
+    elif cli.requestSetupSshKey():
+        # Set the remote machine name in the environment
+        remote_machine_manager.loadMachine(cli.getRequestRemoteMachineName())
+        setup_ssh_keys()
         sys.exit()
     elif cli.requestInstallPlugin():
         if env.plugin_name != None:
@@ -122,31 +106,6 @@ def main():
             # install_plugin(cli.getRequestedPluingName())
             plugin_manager.installPlugin(cli.getRequestedPluingName(), os.getcwd())
             sys.exit()
-    '''
-    if args.list:
-        if args.list == "tasks":
-            show_avail_tasks()
-            sys.exit()
-        elif args.list == "machines":
-            show_avail_machines()
-            sys.exit()
-        elif args.list == "plugins":
-            avail_plugin()
-            sys.exit()
-    elif args.install != None:
-        if env.plugin_name != None:
-            raise FabSimError.RuntimeError(
-                "Install plugin command is not allowed to run from a plugin directory.",
-                details=f"Install plugin command called inside {env.plugin_name} plugin directory."
-            )
-        else:
-            install_plugin(args.install)
-        sys.exit()
-    elif args.remote != None:
-        env.host = args.remote
-        remote_machine_manager.printMachineConfigInfo()
-        sys.exit()
-    '''
 
     # at this point, we are sure that the user is trying to execute a plugin task, so we need to check if the script is called from a valid plugin directory
     if env.plugin_dir == None:
@@ -154,18 +113,6 @@ def main():
         "The script is not called from a valid FabSim3 plugin directory.",
         details="To run fabsim command, you need to be in root or any subdirectory of a FabSim3 plugin."
         )
-
-
-
-    # ###########################################################
-    # # check if fabsim is called inside a valid FabSim3 plugin #
-    # ###########################################################
-    # if env.plugin_dir == None:
-    #     raise FabSimError.RuntimeError(
-    #         "The script is not called from a valid FabSim3 plugin directory.",
-    #         details="To run fabsim command, you need to be in root or subdirectory of a FabSim3 plugin."
-    #     )
-
 
 
     ##########################################################################

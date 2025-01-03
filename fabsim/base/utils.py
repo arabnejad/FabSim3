@@ -4,6 +4,7 @@ import platform
 import subprocess
 import sys
 import time
+from os import path
 from os import system
 from pathlib import Path
 from pprint import pprint
@@ -99,6 +100,37 @@ def execute(task: Callable, *args, **kwargs) -> None:
                 expand=False,
             )
         )
+
+@beartype
+def setup_ssh_keys(password=""):
+    """
+    Sets up SSH key pairs for FabSim access.
+    """
+    console = Console()
+    console.print(
+        Panel(
+            "[magenta]To set up your SSH keys, you will be logged in to your\n"
+            "local machine once using SSH. You may be asked to provide\n"
+            "your password once to facilitate this login.[/magenta]",
+            title="[dark_cyan]Setup SSH keys[/dark_cyan]",
+            expand=False,
+        )
+    )
+
+    home = path.expanduser("~")
+    if path.isfile(f"{home}/.ssh/id_rsa.pub"):
+        print("local id_rsa key already exists.")
+    else:
+        cmd_runner.local(
+            f'ssh-keygen -q -f {home}/.ssh/id_rsa'
+            f' -t rsa -b 4096 -N "{password}"'
+        )
+    cmd_runner.local(
+        template(
+            f"ssh-copy-id -i ~/.ssh/id_rsa.pub {env.host_string}"
+        )
+    )
+
 @beartype
 def install_packages(packages : list, venv: bool = False):
     """

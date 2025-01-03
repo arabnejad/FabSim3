@@ -1,0 +1,47 @@
+slurm-test:
+  remote: 172.28.0.10
+  username: root
+  stat: >-
+    squeue -u $username --Format=jobid,state,account,timeleft,timeused,username
+    --noheader
+  job_dispatch: sbatch
+  cancel_job_command: scancel $jobID
+  job_info_command: squeue --jobs $jobID
+  manual_ssh: false
+  corespernode: 1
+  cores: 1
+  memory: 1000
+  batch_header: sample-slurm
+  batch_header_install_app: sample-slurm
+  PJ_PYheader: eagle-PJ-py
+  PJ_header: sample-slurm-PJ-header
+  PJ_size: '1'
+  PJ_wall_time: '0-3:00:00'
+  job_wall_time: '0-0:10:00'
+  home_path_template: /home/$username
+  app_repository: $home_path/App_repo
+  virtual_env_path: $home_path/VirtualEnv
+
+slurm-qcg-pj-test:
+  remote: 172.28.0.11
+  username: root
+  stat: >-
+    squeue -u $username --Format=jobid,state,account,timeleft,timeused,username
+    --noheader
+  job_dispatch: sbatch
+  cancel_job_command: scancel $jobID
+  job_info_command: squeue --jobs $jobID
+  manual_ssh: false
+  corespernode: 1
+  cores: 1
+  memory: 1000
+  batch_header: sample-slurm
+  batch_header_install_app: sample-slurm
+  PJ_PYheader: eagle-PJ-py
+  PJ_header: sample-slurm-PJ-header
+  PJ_size: '1'
+  PJ_wall_time: '0-3:00:00'
+  job_wall_time: '0-0:10:00'
+  home_path_template: /home/$username
+  app_repository: $home_path/App_repo
+  virtual_env_path: $home_path/VirtualEnv

@@ -15,6 +15,9 @@ class RemoteMachineManager():
     def __init__(self):
         # FabSim machines.yml file
         self.config = self._loadYamlConfigFile(env.fabsim_config_dir, "machines.yml")
+        # FabSim test_machines.yml file
+        self.config.update(self._loadYamlConfigFile(env.fabsim_config_dir, "test_machines.yml"))
+
         # Include private machines
         private_config = self._loadYamlConfigFile(env.fabsim_config_dir, "machines_private.yml", checkFileExists = False)
         self.config.update(private_config)
@@ -87,12 +90,14 @@ class RemoteMachineManager():
 
         env.update(self.config.get(machine_name, {}))
         env.update(self.user_config.get(machine_name, {}))
-        env.update(self.plugin_config.get(machine_name, {}))
+        if self.plugin_config:
+            env.update(self.plugin_config.get(machine_name, {}))
 
         env.modules = self.config["default"]["modules"]
         env.modules.update(self.config.get(machine_name, {}).get("modules", {}))
         env.modules.update(self.user_config.get(machine_name, {}).get("modules", {}))
-        env.modules.update(self.plugin_config.get(machine_name, {}).get("modules", {}))
+        if self.plugin_config:
+            env.modules.update(self.plugin_config.get(machine_name, {}).get("modules", {}))
 
         # TODO: check if we need these lines or not, it will be called later in complete_environment
         # module_commands = self.generate_module_commands()
@@ -115,8 +120,6 @@ class RemoteMachineManager():
         avail_machines = {}
         machine_config_sources = [(self.config, "machines.yml"),
                                   (self.user_config, "machines_user.yml")]
-        if self.plugin_config != None:
-            machine_config_sources.append((self.plugin_config, f"machines_{env.plugin_name}_user.yml"))
 
         # save available remote machines in the environment
         env.avail_machines = self._get_avail_machines(machine_config_sources)

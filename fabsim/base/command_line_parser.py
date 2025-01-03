@@ -79,13 +79,14 @@ class CommandLineParser:
                     "action": "store",
                     "nargs": '+',  # Accept one or more package names
                     "type": str,
-                    "help": """Specify the packages to install.
+                    "help": """Install python packages to be installed in the target remote machine.
 You can list multiple package names separated by spaces.
   Example:
         > fabsim --install_packages p1 p2 p3 --remote <remote_machine_name>
 You can also setup virtual environment by passing the --venv flag.
   Example:
         > fabsim --install_packages p1 p2 p3 --remote <remote_machine_name> --venv true
+
 """,
                     "metavar": ""
                 }
@@ -99,6 +100,17 @@ You can also setup virtual environment by passing the --venv flag.
                     "default": 'false',
                     "help": argparse.SUPPRESS, # hide --venv flag from help
                     "metavar": ""
+                }
+            },
+            {
+                "name": ["--setup_ssh_keys"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": """Configure passwordless SSH access to the remote machine.
+  Example:
+        > fabsim --setup_ssh_keys --remote <remote_machine_name>
+
+""",
                 }
             },
         ]
@@ -144,7 +156,7 @@ You can also setup virtual environment by passing the --venv flag.
         """
         check if the user requested to show the remote machine configuration
         """
-        if self.args.remote and not self.args.install_packages:
+        if self.args.remote and not self.args.install_packages and not self.args.setup_ssh_keys:
             return True
         return False
 
@@ -173,6 +185,14 @@ You can also setup virtual environment by passing the --venv flag.
         check if the user requested to install packages on remote machine
         """
         if self.args.install_packages and self.args.remote:
+            return True
+        return False
+
+    def requestSetupSshKey(self) -> bool:
+        """
+        check if the user requested to setup passwordless SSH access to the remote machine
+        """
+        if self.args.setup_ssh_keys and self.args.remote:
             return True
         return False
 

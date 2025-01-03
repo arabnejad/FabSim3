@@ -84,6 +84,17 @@ class ConfigFabSim:
             machines_yaml_file
         )
 
+        test_machines_yaml_file = os.path.join(self.config_env.config_dir, "test_machines.yml")
+
+        # check the machines.yml if it exits
+        if os.path.isfile(test_machines_yaml_file):
+            print(f"test_machines.yml file is already exists in {self.config_env.config_dir}")
+            return
+
+        shutil.copy(
+            os.path.join(self.config_env.fabsim_root,"deploy","test_machines.yml"),
+            test_machines_yaml_file
+        )
 
     def generate_machines_user_yaml_file(self):
         machines_user_yaml_file = os.path.join(self.config_env.config_dir, "machines_user.yml")

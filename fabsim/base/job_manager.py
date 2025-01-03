@@ -38,7 +38,7 @@ class JobManager():
         specified in machines_user.json, and should normally point to a
         mount on entropy, i.e. /store4/blood/username/results.
         If you can't mount entropy, `put results` can be useful, via
-        `fab legion fetch_results; fab entropy put_results`
+        `fab legion fetch_results`
 
         Args:
             name (str, optional): the job name, it no name provided, all

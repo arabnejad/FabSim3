@@ -187,8 +187,9 @@ class EnvironmentManager(dict):
         env.results_path = os.path.join(env.work_path, "results")
         env.config_path = os.path.join(env.work_path, "config_files")
         env.scripts_path = os.path.join(env.work_path, "scripts")
-        env.local_results = os.path.join(os.path.expanduser(
-            self.template(env.plugin_dir)), "results")
+        if env.plugin_dir:
+            env.local_results = os.path.join(os.path.expanduser(
+                self.template(env.plugin_dir)), "results")
         env.local_system_time = int(time.time())
 
         if hasattr(env, "flee_location"):
