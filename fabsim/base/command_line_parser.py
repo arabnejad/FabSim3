@@ -2,6 +2,15 @@ import argparse
 from fabsim.base.environment_manager import env
 
 
+def colorize(text, color):
+    colors = {
+        "cyan": "\033[96m",
+        "yellow": "\033[93m",
+        "green": "\033[92m",
+        "red": "\033[91m",
+        "end": "\033[0m",
+    }
+    return f"{colors[color]}{text}{colors['end']}"
 
 class CommandLineParser:
     """
@@ -9,7 +18,12 @@ class CommandLineParser:
     """
 
     def __init__(self):
-        self.parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+        self.parser = argparse.ArgumentParser(
+            usage=colorize("""
+    fabsim3 [-h] [-l] [-i] [-r] [--install_packages  [...]] [--venv]
+""", "cyan"),
+            formatter_class=argparse.RawTextHelpFormatter
+        )
         self._setup_arguments()
         self.args = None
 
@@ -23,7 +37,13 @@ class CommandLineParser:
                 "name": ["-l", "--list"],
                 "kwargs": {
                     "choices": ["tasks", "machines", "plugins"],
-                    "help": "list available tasks or machines (choices: 'tasks', 'machines', 'plugins')",
+                    "help": """list available tasks,machines, or plugins (choices: 'tasks', 'machines', 'plugins')
+  Example:
+        > fabsim --list tasks
+        > fabsim --list machines
+        > fabsim --list plugins
+
+""",
                     "metavar": ""
                 }
             },
@@ -32,7 +52,11 @@ class CommandLineParser:
                 "kwargs": {
                     "action": "store",
                     "type" : str,
-                    "help": "Install a FabSim plugin",
+                    "help": """Install a FabSim plugin
+  Example:
+        > fabsim --install <plugin_name>
+
+""",
                     "metavar": ""
                 }
             },
@@ -41,7 +65,11 @@ class CommandLineParser:
                 "kwargs": {
                     "action": "store",
                     "type": str,
-                    "help": "Show the configuration variables for the requested remote machine name",
+                    "help": """Show the configuration variables for the requested remote machine name
+  Example:
+        > fabsim --install <remote_machine_name>
+
+""",
                     "metavar": ""
                 }
             },
@@ -52,13 +80,12 @@ class CommandLineParser:
                     "nargs": '+',  # Accept one or more package names
                     "type": str,
                     "help": """Specify the packages to install.
-- You can list multiple package names separated by spaces.
+You can list multiple package names separated by spaces.
   Example:
-    fabsim --install_packages p1 p2 p3 --remote <remote_machine_name>
-
-- You can also setup virtual environment by passing the --venv flag.
+        > fabsim --install_packages p1 p2 p3 --remote <remote_machine_name>
+You can also setup virtual environment by passing the --venv flag.
   Example:
-    fabsim --install_packages p1 p2 p3 --remote <remote_machine_name> --venv true
+        > fabsim --install_packages p1 p2 p3 --remote <remote_machine_name> --venv true
 """,
                     "metavar": ""
                 }
@@ -70,7 +97,7 @@ class CommandLineParser:
                     "choices": ["true", "false"],
                     "type" : str,
                     "default": 'false',
-                    "help": "Set up virtual environment (true or false, default: false)",
+                    "help": argparse.SUPPRESS, # hide --venv flag from help
                     "metavar": ""
                 }
             },

@@ -1,0 +1,15 @@
+#!/bin/bash
+## sample slurm template
+
+#SBATCH --job-name=$job_name
+#SBATCH --nodes $nodes
+#SBATCH --ntasks-per-node=$corespernode
+#SBATCH --time=$job_wall_time
+#SBATCH --output=$job_results/JobID-%j.output
+#SBATCH --error=$job_results/JobID-%j.error
+
+$run_prefix
+
+
+
+

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#SBATCH --job-name=FabSim_PJ_SLURM
+#SBATCH --nodes $PJ_size
+#SBATCH --ntasks-per-node=$corespernode
+#SBATCH --time=$PJ_wall_time
+#SBATCH --output=$job_results/JobID-%j.output
+#SBATCH --error=$job_results/JobID-%j.error
+
+## create sub-directory to save output job log
+logJob_dir="tasks-log"
+if [ -d "$$logJob_dir" ]; then
+  rm -rf $$logJob_dir
+fi
+mkdir $$logJob_dir
+
+$run_prefix
+
+## load QCG-PilotJob
+
+$run_QCG_PilotJob
+
+
+
