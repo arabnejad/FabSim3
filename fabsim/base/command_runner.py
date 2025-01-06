@@ -89,11 +89,8 @@ class CommandRunner:
         # Construct the full command to be executed
         full_command = self._build_run_command(cmd)
 
-        # Determine sshpass arguments
-        sshpass_options = "-e" if env.env_sshpass else f"-f '{env.sshpass}'"
-
         # Construct the SSH pre-command
-        ssh_prefix = f"sshpass {sshpass_options} ssh {env.username}@{env.remote}"
+        ssh_prefix = f"{env.get_sshpass_cmd()} ssh {env.username}@{env.remote}"
 
         # Execute the complete SSH command
         self.local(f"{ssh_prefix} '{full_command}'")

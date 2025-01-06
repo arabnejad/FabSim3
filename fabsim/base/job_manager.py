@@ -28,74 +28,64 @@ class JobManager():
 
     @beartype
     def fetch_results(self,
-        name: Optional[str] = "",
-        regex: Optional[str] = "",
-        files: Optional[str] = None,
+        job_name: Optional[str] = "",
+        file_pattern: Optional[str] = "",
+        file_list: Optional[str] = None,
     ) -> None:
         """
-        Fetch results of remote jobs to local result store. Specify a job
-        name to transfer just one job. Local path to store results is
-        specified in machines_user.json, and should normally point to a
-        mount on entropy, i.e. /store4/blood/username/results.
-        If you can't mount entropy, `put results` can be useful, via
-        `fab legion fetch_results`
+        Fetch the results of remote jobs to the local result store. If no job name is provided, all
+        directories from `fabric_dir` will be fetched. The local path to store results is specified
+        in machines yml files.
 
         Args:
-            name (str, optional): the job name, it no name provided, all
-                directories from `fabric_dir` will be fetched
-            regex (str, optional): the matching pattern
-            files (str, optional): the list of files need to fetched from the
-                remote machine. The list of file should be passed as string, and
-                split by `;`. For example, to fetch only `out.csv` and `env.yml`
-                files, you should pass `files="out.csv;env.yml" to this function.
+            job_name (str, optional): The job name. If no name is provided, all directories
+                from `fabric_dir` will be fetched.
+            file_pattern (str, optional): The matching pattern for files.
+            file_list (str, optional): A semicolon-separated list of files to fetch from the remote
+                machine, e.g., `files="out.csv;env.yml"`.
         """
-        fetch_files = []
-        if files is not None:
-            fetch_files = files.split(";")
-        includes_files = ""
-        if len(fetch_files) > 0:
-            includes_files = " ".join(
+        included_files  = []
+        if file_list is not None:
+            included_files  = file_list.split(";")
+
+        rsync_include_rules = (
+            " ".join(
                 [
-                    *["--include='*/' "],
-                    *["--include='{}' ".format(file) for file in fetch_files],
-                    *["--exclude='*'  "],
-                    *["--prune-empty-dirs "],
+                    "--include='*/' ",
+                    *[f"--include='{file}' " for file in included_files],
+                    "--exclude='*' ",
+                    "--prune-empty-dirs ",
                 ]
             )
+            if included_files
+            else ""
+        )
 
-        env.job_results, env.job_results_local = self.configure_job_paths(name)
+        # Configure job paths
+        env.job_results, env.job_results_local = self.configure_job_paths(job_name)
 
-        # check if the local results directory exists or not
-        if not os.path.isdir(env.job_results_local):
-            os.makedirs(env.job_results_local)
+        # Ensure the local results directory exists
+        os.makedirs(env.job_results_local, exist_ok=True)
 
         if env.manual_sshpass:
-            sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
-            cmd_runner.local(
-                template(
-                    "rsync -pthrvz -e 'sshpass {} ssh -p $port' {}"
-                    "$username@$remote:$job_results/{}  "
-                    "$job_results_local".format(
-                        sshpass_args, includes_files, regex
-                    )
-                )
+            command = (
+                f"rsync -pthrvz '{env.get_sshpass_cmd()} ssh -p $port' {rsync_include_rules}"
+                f"{env.get_remote_address_str()}:$job_results/{file_pattern} $job_results_local"
             )
         elif env.manual_gsissh:
-            cmd_runner.local(
-                template(
-                    "globus-url-copy -cd -r -sync {}"
-                    "gsiftp://$remote/$job_results/{} "
-                    "file://$job_results_local/".format(includes_files, regex)
-                )
+            command = (
+                f"globus-url-copy -cd -r -sync {rsync_include_rules}"
+                f"gsiftp://$remote/$job_results/{file_pattern} file://$job_results_local/"
             )
         else:
-            cmd_runner.local(
-                template(
-                    "rsync -pthrvz -e 'ssh -p $port' {}"
-                    "$username@$remote:$job_results/{} "
-                    "$job_results_local".format(includes_files, regex)
-                )
+            command = (
+                f"rsync -pthrvz -e 'ssh -p $port' {rsync_include_rules}"
+                f"{env.get_remote_address_str()}:$job_results/{file_pattern} $job_results_local"
             )
+
+        # Execute the command
+        cmd_runner.local(template(command))
+
 
     @beartype
     def get_config_file_path(self, config_name: str) -> str:
@@ -163,12 +153,11 @@ class JobManager():
         """
         Transfer config files using rsync with sshpass.
         """
-        sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
         cmd_runner.local(
             template(
-                f"rsync -pthrvz --rsh='sshpass {sshpass_args} ssh -p 22' "
+                f"rsync -pthrvz --rsh='{env.get_sshpass_cmd()} ssh -p 22' "
                 "$job_config_path_local/ "
-                "$username@$remote:$job_config_path/"
+                f"{env.get_remote_address_str()}:$job_config_path/"
             )
         )
 
@@ -180,7 +169,7 @@ class JobManager():
             template(
                 f"rsync -pthrvz -e 'ssh -p $port' "
                 "$job_config_path_local/ "
-                "$username@$remote:$job_config_path/"
+                f"{env.get_remote_address_str()}:$job_config_path/"
             )
         )
 
@@ -537,17 +526,16 @@ class JobManager():
                 cmd_runner.local(
                     template(
                         f"ssh $remote -C 'mkdir -p {destination_path}' && "
-                        f"scp -r {source_path} $username@$remote:{destination_path}/../ && "
+                        f"scp -r {source_path} {env.get_remote_address_str()}:{destination_path}/../ && "
                         f"ssh $remote -C 'scp -r {destination_path} "
                         f"$remote_compute:{destination_path}/../'"
                     )
                 )
             elif env.manual_sshpass:
-                sshpass_args = "-e" if env.env_sshpass else "-f $sshpass"
                 cmd_runner.local(
                     template(
-                        f"rsync -pthrvz --rsh='sshpass {sshpass_args} ssh -p 22' "
-                        f"{source_path}/ $username@$remote:{destination_path}/"
+                        f"rsync -pthrvz --rsh='{env.get_sshpass_cmd()} ssh -p 22' "
+                        f"{source_path}/ {env.get_remote_address_str()}:{destination_path}/"
                     )
                 )
             elif env.manual_gsissh:
@@ -1077,7 +1065,7 @@ class JobManager():
         # Transfer Radical configuration script to remote machine
         cmd_runner.local(
             template(
-                f"rsync -pthrvz {local_working_dir}/ $username@$remote:{remote_working_dir}/"
+                f"rsync -pthrvz {local_working_dir}/ {env.get_remote_address_str()}:{remote_working_dir}/"
             )
         )
 

@@ -1,0 +1,66 @@
+
+services:
+  slurm-base:
+    build:
+      context: SLURM
+      dockerfile: Dockerfile.base
+    image: slurm-base:latest
+    # Prevent the base service from running
+    command: ["/bin/true"]  # Prevent the container from running in the background
+
+  slurm:
+    build:
+      context: SLURM
+      dockerfile: Dockerfile.slurm
+      args:
+        BASE_IMAGE: slurm-base:latest
+    container_name: slurm
+    depends_on:
+      - slurm-base
+    networks:
+      HPC-test-network:
+        ipv4_address: 172.28.0.100
+    ports:
+      - "7004:7004"  # SLURM Slurmd Port
+      - "7003:7003"  # SLURM Slurmctld Port
+      # - "2222:22" # SSH Port
+    # command: ["/bin/bash", "-c", "/entrypoint.sh"]
+
+  slurm-qcg-pj:
+    build:
+      context: SLURM
+      dockerfile: Dockerfile.slurm.qcg-pj
+      args:
+        BASE_IMAGE: slurm-base:latest
+    container_name: slurm-qcg-pj
+    depends_on:
+      - slurm
+    networks:
+      HPC-test-network:
+        ipv4_address: 172.28.0.101
+    ports:
+      - "7006:7004"  # SLURM Slurmd Port
+      - "7005:7003"  # SLURM Slurmctld Port
+    # command: ["/bin/bash", "-c", "/entrypoint.sh"]
+
+  python-tests:
+    build:
+      context: Python
+      dockerfile: Dockerfile.python3
+    container_name: python-tests
+    volumes:
+      - ..:/app/FabSim3
+    depends_on:
+      - slurm-qcg-pj
+    networks:
+      HPC-test-network:
+        ipv4_address: 172.28.0.3
+    entrypoint: ["/entrypoint.sh"]  # Run entrypoint.sh script
+
+networks:
+  HPC-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1

@@ -91,6 +91,20 @@ class EnvironmentManager(dict):
         except KeyError:
             raise AttributeError(f"The environment variable '{key}' not found")
 
+    @beartype
+    def get_remote_address_str(self) -> str:
+        """
+        Get the remote address string based on the environment variables.
+        """
+        return self.template("$username@$remote")
+
+    @beartype
+    def get_sshpass_cmd(self) -> str:
+        """
+        Get the sshpass command based on the environment variable.
+        """
+        sshpass_args = self.template("-e" if env.env_sshpass else "-f $sshpass")
+        return f"sshpass {sshpass_args}"
 
     @beartype
     def template(self, pattern: str) -> str:

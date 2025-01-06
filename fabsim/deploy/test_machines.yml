@@ -1,5 +1,5 @@
 slurm-test:
-  remote: 172.28.0.10
+  remote: 172.28.0.100
   username: root
   stat: >-
     squeue -u $username --Format=jobid,state,account,timeleft,timeused,username
@@ -23,7 +23,7 @@ slurm-test:
   virtual_env_path: $home_path/VirtualEnv
 
 slurm-qcg-pj-test:
-  remote: 172.28.0.11
+  remote: 172.28.0.101
   username: root
   stat: >-
     squeue -u $username --Format=jobid,state,account,timeleft,timeused,username

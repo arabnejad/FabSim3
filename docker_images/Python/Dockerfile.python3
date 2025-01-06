@@ -1,0 +1,91 @@
+# Use the slim Python 3.8 image as a base
+FROM python:3.8-slim
+
+
+# Install dependencies for pyenv and building Python versions
+RUN DEBIAN_FRONTEND=noninteractive DEBCONF_NOWARNINGS=yes && \
+    apt-get update && \
+    apt-get install -y \
+    apt-utils \
+    gcc \
+    g++ \
+    openssh-server \
+    openssh-client \
+    make \
+    rsync \
+    tree \
+    bash \
+    git \
+    curl \
+    wget \
+    llvm \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libopenblas-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncurses5-dev \
+    libncursesw5-dev \
+    libffi-dev \
+    liblzma-dev \
+    xz-utils \
+    tk-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Generate SSH host keys
+RUN ssh-keygen -A
+
+# Create the necessary SSH directories and files
+# - Set root password is set to "root"
+# - Set PermitRootLogin yes to allow root login
+# - Added 'UseDNS no' and 'AllowTcpForwarding yes' for better SSH performance and flexibility
+RUN mkdir -p /root/.ssh && \
+    touch /root/.ssh/authorized_keys && \
+    touch /root/.ssh/known_hosts && \
+    chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/authorized_keys /root/.ssh/known_hosts && \
+    echo 'root:root' | chpasswd && \
+    sed -i 's/#PermitRootLogin .*$/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    echo "UseDNS no" >> /etc/ssh/sshd_config && \
+    echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
+
+# Ensure the privilege separation directory exists
+RUN mkdir -p /run/sshd
+
+# Expose SSH port
+EXPOSE 22
+
+# Install pyenv
+RUN curl https://pyenv.run | bash
+
+# Set environment variables for pyenv to work correctly
+ENV PATH="/root/.pyenv/bin:${PATH}"
+ENV PYENV_ROOT="/root/.pyenv"
+ENV PATH="${PYENV_ROOT}/shims:${PATH}"
+
+# Install Python versions
+RUN pyenv install 3.8 && \
+    pyenv install 3.9 && \
+    pyenv install 3.10 && \
+    pyenv install 3.11
+
+# Set global Python version to 3.8 by default
+RUN pyenv global 3.8
+
+# Ensure pip is installed for all installed Python versions
+RUN pyenv global 3.8  && python -m ensurepip --upgrade && \
+    pyenv global 3.9  && python -m ensurepip --upgrade && \
+    pyenv global 3.10 && python -m ensurepip --upgrade && \
+    pyenv global 3.11 && python -m ensurepip --upgrade
+
+
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+# Make entrypoint.sh executable
+RUN chmod +x /entrypoint.sh
+
+# Set entrypoint to run entrypoint.sh script
+ENTRYPOINT ["/entrypoint.sh"]
+# ENTRYPOINT ["/bin/sh"]
+

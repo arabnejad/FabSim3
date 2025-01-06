@@ -23,6 +23,7 @@ from fabsim.base.utils import (
     show_avail_tasks,
     install_packages,
     setup_ssh_keys,
+    display_fabsim_config,
 )
 
 
@@ -57,7 +58,6 @@ def main():
             details="Please run config_fabsim command to create the configuration files."
         )
 
-
     # Create the parser
     cli = CommandLineParser()
     cli.parse_arguments()
@@ -72,7 +72,10 @@ def main():
     #####################################
     # checking input optional arguments #
     #####################################
-    if cli.requestShowAvailableTasks():
+    if cli.requestShowConfig():
+        display_fabsim_config()
+        sys.exit()
+    elif cli.requestShowAvailableTasks():
         show_avail_tasks()
         sys.exit()
     elif cli.requestShowAvailableMachines():

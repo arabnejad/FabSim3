@@ -1,0 +1,87 @@
+# Base image
+FROM ubuntu:22.04
+
+# Set non-interactive frontend for apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    munge \
+    slurm-wlm \
+    slurm-client \
+    slurm-wlm-basic-plugins \
+    python3 \
+    python3-pip \
+    python3.10-venv \
+    libcgroup-dev \
+    rsync \
+    tree \
+    vim \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install OpenSSH server
+RUN apt-get update && \
+    apt-get install -y openssh-server && \
+    mkdir -p /var/run/sshd \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create the necessary SSH directories and files
+RUN mkdir -p /root/.ssh && \
+    touch /root/.ssh/authorized_keys && \
+    touch /root/.ssh/known_hosts && \
+    chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/authorized_keys /root/.ssh/known_hosts && \
+    echo 'root:root' | chpasswd && \
+    sed -i 's/#PermitRootLogin .*$/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# Set up Python3 as default Python
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Configure MUNGE
+RUN mkdir -p /etc/munge /var/lib/munge && \
+    dd if=/dev/urandom bs=1 count=1024 > /etc/munge/munge.key && \
+    chown -R munge: /etc/munge /var/lib/munge && \
+    chmod 0700 /etc/munge /var/lib/munge && \
+    chmod 0600 /etc/munge/munge.key
+
+
+# Configure SLURM directories
+RUN mkdir -p /etc/slurm /var/spool/slurmd /var/spool/slurmctld /var/log/slurm && \
+    chown -R slurm: /var/spool/slurmctld /var/spool/slurmd /var/log/slurm && \
+    chmod 0700 /var/spool/slurmctld /var/spool/slurmd
+
+# Create SLURM configuration file
+RUN echo "\
+ClusterName=localcluster\n\
+ControlMachine=localhost\n\
+SlurmUser=slurm\n\
+StateSaveLocation=/var/spool/slurmctld\n\
+SlurmdLogFile=/var/log/slurm/slurmd.log\n\
+SlurmctldLogFile=/var/log/slurm/slurmctld.log\n\
+SlurmdSpoolDir=/var/spool/slurmd\n\
+SlurmctldPort=7004\n\
+SlurmdPort=7003\n\
+AuthType=auth/munge\n\
+SelectType=select/cons_res\n\
+SelectTypeParameters=CR_CPU_Memory\n\
+SchedulerType=sched/backfill\n\
+NodeName=$(hostname) CPUs=4 State=UNKNOWN\n\
+PartitionName=debug Nodes=$(hostname) Default=YES MaxTime=INFINITE State=UP\n\
+ProctrackType=proctrack/linuxproc\n\
+" > /etc/slurm/slurm.conf
+
+# Expose SLURM necessary ports and SSH port
+EXPOSE 7003 7004 22
+
+ENV MUNGE_KEY_FILE /etc/munge/munge.key
+ENV SLURM_CONF /etc/slurm/slurm.conf
+
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Default entrypoint
+# ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["sh", "-c", "service ssh start && /entrypoint.sh"]
+

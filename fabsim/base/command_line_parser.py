@@ -113,6 +113,18 @@ You can also setup virtual environment by passing the --venv flag.
 """,
                 }
             },
+            {
+                "name": ["--show_config"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": """Check if any configuration is available for FabSim.
+  Example:
+        > fabsim --show_config
+
+""",
+                }
+            },
+
         ]
 
         # Iterate over the arguments and add them to the parser
@@ -187,6 +199,12 @@ You can also setup virtual environment by passing the --venv flag.
         if self.args.install_packages and self.args.remote:
             return True
         return False
+
+    def requestShowConfig(self) -> bool:
+        """
+        check if the user requested to show the FabSim configuration
+        """
+        return self.args.show_config
 
     def requestSetupSshKey(self) -> bool:
         """

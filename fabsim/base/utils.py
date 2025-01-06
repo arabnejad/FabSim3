@@ -28,7 +28,34 @@ import os
 from fabsim.base.job_manager import job_manager
 from fabsim.base.command_runner import cmd_runner
 
-from fabsim.base.environment_manager import env
+from fabsim.base.environment_manager import env, FABSIM_CONFIG_DIR
+
+
+def display_fabsim_config() -> None:
+    """
+    Display the availability status of FabSim3 configuration files
+    """
+    console = Console()
+
+    # Check if the configuration directory exists and set the message accordingly
+    if os.path.exists(FABSIM_CONFIG_DIR):
+        message = f"FabSim3 configuration files are available in [green]{FABSIM_CONFIG_DIR}"
+    else:
+        message = (
+            f"[red]FabSim3 configuration files are not available in {FABSIM_CONFIG_DIR}\n\n"
+            "[white]Please run [green]config_fabsim [white]command to create the configuration files"
+        )
+
+    # Display the message within a styled panel
+    console.print(
+        Panel(
+            message,
+            title="[dark_cyan]FabSim3 Configuration[/dark_cyan]",
+            border_style="dark_cyan",
+            expand=False,
+        ),
+        new_line_start=True,
+    )
 
 
 def show_avail_tasks() -> None:
@@ -159,7 +186,7 @@ def install_packages(packages : list, venv: bool = False):
     for dep in os.listdir(tmp_app_dir):
         cmd_runner.local(
             template(
-                f"rsync -pthrvz -e 'ssh -p $port' {tmp_app_dir}/{dep} $username@$remote:{app_repository}"
+                f"rsync -pthrvz -e 'ssh -p $port' {tmp_app_dir}/{dep} {env.get_remote_address_str()}:{app_repository}"
             )
         )
     #
